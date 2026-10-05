@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: rentafacil-api
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start:render
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rentafacil-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 1d
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        sync: false
+
+databases:
+  - name: rentafacil-db
+    databaseName: rentafacil
+    plan: free
