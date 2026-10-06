@@ -5,6 +5,8 @@ import { AutosService } from './autos.service';
 import { WebhookDispatcher } from './webhook-dispatcher.service';
 import { AutosController } from './autos.controller';
 import { AuthDemoController } from './auth-demo.controller';
+import { AccountController } from './account.controller';
+import { UsersAdminController } from './admin/users-admin.controller';
 import { DepotsAdminController } from './admin/depots-admin.controller';
 import { HoldsAdminController } from './admin/holds-admin.controller';
 import { OrderPreviewsAdminController } from './admin/order-previews-admin.controller';
@@ -22,19 +24,21 @@ import { Supplier } from './entities/supplier.entity';
 import { Vehicle } from './entities/vehicle.entity';
 import { VehicleImage } from './entities/vehicle-image.entity';
 import { WebhookSubscription } from './entities/webhook.entity';
+import { User } from './entities/user.entity';
 
 @Module({
   imports: [
     CommonModule,
     TypeOrmModule.forFeature([
       Depot, Supplier, Vehicle, VehicleImage,
-      Hold, OrderPreview, Order, WebhookSubscription,
+      Hold, OrderPreview, Order, WebhookSubscription, User,
     ]),
   ],
   controllers: [
     AutosController,
     AuthDemoController,
-    // Administracion interna: una API CRUD por cada tabla de la BD
+    AccountController,
+    // Administración interna: una API CRUD por cada tabla de la BD (9)
     SuppliersAdminController,
     DepotsAdminController,
     VehiclesAdminController,
@@ -43,6 +47,7 @@ import { WebhookSubscription } from './entities/webhook.entity';
     OrderPreviewsAdminController,
     OrdersAdminController,
     WebhooksAdminController,
+    UsersAdminController,
     StatsAdminController,
   ],
   providers: [AutosService, WebhookDispatcher],

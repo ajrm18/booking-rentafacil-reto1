@@ -22,7 +22,7 @@ export default function SuppliersAdmin() {
 
   const editar = (s: any) => { setForm(s); setEditId(s.supplier_id); setShow(true); };
   const eliminar = async (id: number) => {
-    if (!confirm('Eliminar proveedor?')) return;
+    if (!confirm('¿Eliminar este proveedor?')) return;
     try { await admin.deleteSupplier(id); cargar(); }
     catch (e: any) { alert(e?.message || 'Error'); }
   };
@@ -48,7 +48,7 @@ export default function SuppliersAdmin() {
               <input className="form-control" value={form.brand || ''} onChange={(e) => setForm({ ...form, brand: e.target.value })} />
             </div>
             <div className="form-group">
-              <label className="form-label">Descripcion</label>
+              <label className="form-label">Descripción</label>
               <textarea className="form-control" rows={2} value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -61,7 +61,7 @@ export default function SuppliersAdmin() {
 
       <div className="table-wrapper">
         <table className="table">
-          <thead><tr><th>ID</th><th>Nombre</th><th>Marca</th><th>Descripcion</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>Nombre</th><th>Marca</th><th>Descripción</th><th></th></tr></thead>
           <tbody>
             {lista.map((s) => (
               <tr key={s.supplier_id}>

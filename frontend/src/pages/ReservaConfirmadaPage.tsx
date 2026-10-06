@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { orders } from '../api';
 import type { OrderDetail } from '../types';
+import { estadoOrden, fechaCorta } from '../utils/reservas';
 
 export default function ReservaConfirmadaPage() {
   const { orderId } = useParams();
@@ -10,7 +11,7 @@ export default function ReservaConfirmadaPage() {
 
   useEffect(() => {
     if (!orderId) return;
-    orders.get(orderId).then(setOrden).catch((e) => setError(e?.message || 'No se encontro la orden'));
+    orders.get(orderId).then(setOrden).catch((e) => setError(e?.message || 'No se encontró la orden'));
   }, [orderId]);
 
   if (error) return (
@@ -32,7 +33,7 @@ export default function ReservaConfirmadaPage() {
               fontSize: '2rem', color: 'var(--success)', marginBottom: '0.5rem',
             }}>✓</div>
             <h1 style={{ margin: 0 }}>Reserva confirmada</h1>
-            <div className="text-muted">Tu reserva se registro correctamente.</div>
+            <div className="text-muted">Tu reserva se registró correctamente.</div>
           </div>
 
           <div style={{
@@ -40,11 +41,16 @@ export default function ReservaConfirmadaPage() {
             padding: '1rem', borderRadius: 'var(--radius)', marginBottom: '1rem',
           }}>
             <div className="flex-between"><span>Localizador (PNR)</span><code style={{ fontSize: '1rem' }}>{orden.locator}</code></div>
-            <div className="flex-between"><span>Order ID</span><code style={{ fontSize: '0.8rem' }}>{orden.order_id}</code></div>
+            <div className="flex-between"><span>ID de la orden</span><code style={{ fontSize: '0.8rem' }}>{orden.order_id}</code></div>
             <div className="flex-between"><span>Estado</span>
-              <span className="badge badge-success">{orden.status}</span>
+              <span className={`badge ${estadoOrden(orden).badge}`}>{estadoOrden(orden).label}</span>
             </div>
-            <div className="flex-between"><span>Vehiculo</span>
+            {(orden.route_details as any)?.pickup?.datetime && (
+              <div className="flex-between"><span>Fechas</span>
+                <span>{fechaCorta((orden.route_details as any).pickup.datetime)} – {fechaCorta((orden.route_details as any).dropoff?.datetime)}</span>
+              </div>
+            )}
+            <div className="flex-between"><span>Vehículo</span>
               <b>{orden.vehicle_details.make} {orden.vehicle_details.model}</b>
             </div>
             <div className="flex-between" style={{ borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>

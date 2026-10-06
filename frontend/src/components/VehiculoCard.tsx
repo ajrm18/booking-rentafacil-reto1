@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { VehicleDetail } from '../types';
+import { etiqueta } from '../utils/reservas';
 
 export const ETIQUETA_CATEGORIA: Record<string, string> = {
   Compacto: 'Económico', Sedan: 'Sedán', SUV: 'SUV', Camioneta: 'Camioneta', Lujo: 'Premium',
@@ -42,8 +43,8 @@ export default function VehiculoCard({ vehiculo, precioTotal, dias, extraQuery }
           </div>
           <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
             <Spec>{vehiculo.seats} pasajeros</Spec>
-            <Spec>{vehiculo.transmission === 'automatica' ? 'Automática' : vehiculo.transmission}</Spec>
-            <Spec>{vehiculo.fuel_type === 'hibrido' ? 'Híbrido' : vehiculo.fuel_type === 'diesel' ? 'Diésel' : vehiculo.fuel_type}</Spec>
+            <Spec>{etiqueta(vehiculo.transmission)}</Spec>
+            <Spec>{etiqueta(vehiculo.fuel_type)}</Spec>
           </div>
           <div style={{
             marginTop: 'auto', paddingTop: '0.75rem',

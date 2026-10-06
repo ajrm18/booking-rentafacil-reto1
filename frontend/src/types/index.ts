@@ -110,7 +110,23 @@ export interface OrderDetail {
 export interface AuthUser {
   email: string;
   role: 'admin' | 'client';
+  first_name?: string;
+  last_name?: string;
 }
+
+/** Usuario de la tabla users (GET /admin/users). Nunca incluye la contraseña. */
+export interface AdminUser {
+  user_id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  role: 'admin' | 'client';
+  phone: string | null;
+  national_id: string | null;
+  created_at: string;
+}
+
+export type AdminUserInput = Partial<Omit<AdminUser, 'user_id' | 'created_at'>> & { password?: string };
 
 export interface TokenResponse {
   access_token: string;

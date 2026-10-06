@@ -17,7 +17,7 @@ export default function LoginPage() {
       const u = await login(email, password);
       nav(u.role === 'admin' ? '/admin' : '/');
     } catch (e: any) {
-      setError(e?.message || 'Credenciales invalidas');
+      setError(e?.message || 'Credenciales inválidas');
     } finally { setLoading(false); }
   };
 
@@ -30,19 +30,19 @@ export default function LoginPage() {
           <div className="eyebrow">Mi cuenta</div>
           <h1 style={{ margin: '0.3rem 0 0.5rem' }}>Ingresar</h1>
           <p className="text-muted">
-            Autenticacion OAuth2 (equivalente al Authorization Server del Booking Hub central).
-            El token JWT recibido incluye los scopes autos:read, autos:book, autos:cancel.
+            Autenticación OAuth2 (equivalente al Authorization Server del Booking Hub central).
+            El token JWT recibido incluye los scopes autos:read, autos:book y autos:cancel.
           </p>
           <form onSubmit={submit}>
             {error && <div className="alert alert-danger">{error}</div>}
             <div className="form-group">
-              <label className="form-label">Email</label>
-              <input type="email" className="form-control" required
+              <label className="form-label" htmlFor="login-email">Correo electrónico</label>
+              <input id="login-email" type="email" className="form-control" required autoComplete="username"
                 value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             <div className="form-group">
-              <label className="form-label">Contrasena</label>
-              <input type="password" className="form-control" required minLength={6}
+              <label className="form-label" htmlFor="login-pass">Contraseña</label>
+              <input id="login-pass" type="password" className="form-control" required minLength={6} autoComplete="current-password"
                 value={password} onChange={(e) => setPassword(e.target.value)} />
             </div>
             <button className="btn btn-primary btn-block" type="submit" disabled={loading}>
@@ -50,7 +50,7 @@ export default function LoginPage() {
             </button>
           </form>
           <div className="alert alert-info mt-2" style={{ fontSize: '0.85rem' }}>
-            <b>Cuentas demo:</b>
+            <b>Cuentas de demostración:</b>
             <div style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
               <button className="btn btn-outline btn-sm" type="button"
                 onClick={() => usar('admin@rentafacil.ec', 'Admin12345')}>

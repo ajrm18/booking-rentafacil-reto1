@@ -4,9 +4,8 @@ import { catalog } from '../api';
 import type { Depot, VehicleDetail } from '../types';
 import VehiculoCard from '../components/VehiculoCard';
 import CarTypeIcon from '../components/CarTypeIcon';
-
-const HOY = new Date().toISOString().slice(0, 10);
-const TRES_DIAS = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+import FechaError from '../components/FechaError';
+import { enDias, hayErrores, hoy, validarFechas } from '../utils/reservas';
 
 const HERO_IMG = 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f6/BMW_G20_3_Series_Jet_Black_%281%29.jpg/1280px-BMW_G20_3_Series_Jet_Black_%281%29.jpg';
 
@@ -23,8 +22,9 @@ export default function HomePage() {
   const [depots, setDepots] = useState<Depot[]>([]);
   const [vehiculos, setVehiculos] = useState<VehicleDetail[]>([]);
   const [depotId, setDepotId] = useState('');
-  const [ini, setIni] = useState(HOY);
-  const [fin, setFin] = useState(TRES_DIAS);
+  const [ini, setIni] = useState(hoy());
+  const [fin, setFin] = useState(enDias(3));
+  const errFechas = validarFechas(ini, fin);
 
   useEffect(() => {
     catalog.depots().then((r) => setDepots(r.data)).catch(() => {});
@@ -42,6 +42,7 @@ export default function HomePage() {
 
   const buscar = (e: React.FormEvent) => {
     e.preventDefault();
+    if (hayErrores(errFechas)) return;
     const params = new URLSearchParams({ depotId, ini, fin });
     nav(`/catalogo?${params.toString()}`);
   };
@@ -64,8 +65,8 @@ export default function HomePage() {
 
           <form onSubmit={buscar} className="search-bar">
             <div className="search-field">
-              <label className="form-label">Lugar de recogida</label>
-              <select className="form-control" value={depotId} onChange={(e) => setDepotId(e.target.value)}>
+              <label className="form-label" htmlFor="home-depot">Lugar de recogida</label>
+              <select id="home-depot" className="form-control" value={depotId} onChange={(e) => setDepotId(e.target.value)}>
                 <option value="">Todas las agencias</option>
                 {depots.map((d) => (
                   <option key={d.depot_id} value={d.depot_id}>{d.name}</option>
@@ -73,16 +74,21 @@ export default function HomePage() {
               </select>
             </div>
             <div className="search-field">
-              <label className="form-label">Fecha de recogida</label>
-              <input type="date" className="form-control" value={ini}
-                min={HOY} onChange={(e) => setIni(e.target.value)} />
+              <label className="form-label" htmlFor="home-ini">Fecha de recogida</label>
+              <input id="home-ini" type="date" className="form-control" value={ini}
+                min={hoy()} onChange={(e) => setIni(e.target.value)}
+                aria-invalid={!!errFechas.ini} aria-describedby={errFechas.ini ? 'home-ini-err' : undefined} />
+              <FechaError id="home-ini-err" mensaje={errFechas.ini} />
             </div>
             <div className="search-field">
-              <label className="form-label">Fecha de devolución</label>
-              <input type="date" className="form-control" value={fin}
-                min={ini || HOY} onChange={(e) => setFin(e.target.value)} />
+              <label className="form-label" htmlFor="home-fin">Fecha de devolución</label>
+              <input id="home-fin" type="date" className="form-control" value={fin}
+                min={ini || hoy()} max={ini ? enDias(90, new Date(`${ini}T00:00:00`)) : undefined}
+                onChange={(e) => setFin(e.target.value)}
+                aria-invalid={!!errFechas.fin} aria-describedby={errFechas.fin ? 'home-fin-err' : undefined} />
+              <FechaError id="home-fin-err" mensaje={errFechas.fin} />
             </div>
-            <button type="submit" className="btn btn-primary" style={{ padding: '0.8rem 1.6rem', alignSelf: 'end' }}>
+            <button type="submit" className="btn btn-primary" disabled={hayErrores(errFechas)} style={{ padding: '0.8rem 1.6rem', alignSelf: 'end' }}>
               Buscar vehículos
             </button>
           </form>

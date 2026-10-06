@@ -20,7 +20,7 @@ interface Props {
 
 type Errores = Partial<Record<'numero' | 'titular' | 'expiracion' | 'cvv', string>>;
 
-/** Algoritmo de Luhn (mod 10) sobre los digitos de la tarjeta. */
+/** Algoritmo de Luhn (mod 10) sobre los dígitos de la tarjeta. */
 export function luhnValido(digitos: string): boolean {
   if (!/^\d+$/.test(digitos)) return false;
   let suma = 0;
@@ -32,7 +32,7 @@ export function luhnValido(digitos: string): boolean {
   return suma % 10 === 0;
 }
 
-/** MM/AA valida y no vencida (la tarjeta vale hasta el ultimo dia de ese mes). */
+/** MM/AA válida y no vencida (la tarjeta vale hasta el último día de ese mes). */
 export function expiracionValida(valor: string, hoy = new Date()): boolean {
   const m = /^(\d{2})\/(\d{2})$/.exec(valor);
   if (!m) return false;
@@ -99,8 +99,9 @@ export default function PaymentSimulatorModal({ total, currency, onPay, onClose 
     if (digitos.length !== 16) err.numero = 'Debe tener 16 dígitos';
     else if (!luhnValido(digitos)) err.numero = 'Número de tarjeta inválido';
     if (titular.trim().length < 3) err.titular = 'Mínimo 3 caracteres';
-    if (!/^\d{2}\/\d{2}$/.test(expiracion)) err.expiracion = 'Formato MM/AA';
-    else if (!expiracionValida(expiracion)) err.expiracion = 'Fecha inválida o vencida';
+    if (!/^\d{2}\/\d{2}$/.test(expiracion)) err.expiracion = 'Usa el formato MM/AA (ej. 12/30)';
+    else if (Number(expiracion.slice(0, 2)) < 1 || Number(expiracion.slice(0, 2)) > 12) err.expiracion = 'El mes debe estar entre 01 y 12';
+    else if (!expiracionValida(expiracion)) err.expiracion = 'La tarjeta está vencida';
     if (!/^\d{3}$/.test(cvv)) err.cvv = 'Deben ser 3 dígitos';
     return err;
   };

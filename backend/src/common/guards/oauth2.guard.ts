@@ -34,9 +34,9 @@ export class OAuth2Guard implements CanActivate {
       throw new HttpException(
         {
           type: 'https://api.booking-hub.com/errors/missing-token',
-          title: 'OAuth2 access token is required',
+          title: 'Se requiere iniciar sesión',
           status: HttpStatus.UNAUTHORIZED,
-          detail: 'Send an Authorization: Bearer <token> header.',
+          detail: 'Envíe la cabecera Authorization: Bearer <token>.',
           code: 'VALIDATION_FAILED',
         },
         HttpStatus.UNAUTHORIZED,
@@ -51,9 +51,9 @@ export class OAuth2Guard implements CanActivate {
       throw new HttpException(
         {
           type: 'https://api.booking-hub.com/errors/invalid-token',
-          title: 'Invalid or expired token',
+          title: 'Sesión inválida o expirada',
           status: HttpStatus.UNAUTHORIZED,
-          detail: 'The provided OAuth2 access token could not be verified.',
+          detail: 'Tu sesión expiró o no es válida. Vuelve a iniciar sesión.',
           code: 'VALIDATION_FAILED',
         },
         HttpStatus.UNAUTHORIZED,
@@ -72,9 +72,9 @@ export class OAuth2Guard implements CanActivate {
         throw new HttpException(
           {
             type: 'https://api.booking-hub.com/errors/insufficient-scope',
-            title: 'Insufficient scope',
+            title: 'Permisos insuficientes',
             status: HttpStatus.FORBIDDEN,
-            detail: `Token missing required scope: ${s}`,
+            detail: `El token no tiene el permiso requerido: ${s}`,
             code: 'VALIDATION_FAILED',
           },
           HttpStatus.FORBIDDEN,

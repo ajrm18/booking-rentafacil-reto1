@@ -1,27 +1,38 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { admin } from '../api';
 
-export default function AdminDashboard() {
-  const [stats, setStats] = useState({
-    total_vehicles: 0, total_depots: 0, total_suppliers: 0,
-    total_orders: 0, confirmed_orders: 0, total_revenue: 0,
-  });
+const dinero = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  useEffect(() => { admin.stats().then(setStats).catch(() => {}); }, []);
+export default function AdminDashboard() {
+  // null mientras carga: se muestra "—" en vez de ceros que parecerían datos reales
+  const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    admin.stats().then(setStats).catch((e) => setError(e?.message || 'No se pudieron cargar las estadísticas'));
+  }, []);
+  const n = (k: string) => (stats ? stats[k] ?? 0 : '—');
 
   const cards = [
-    { label: 'Vehiculos', value: stats.total_vehicles, color: 'var(--strong)' },
-    { label: 'Agencias', value: stats.total_depots, color: 'var(--strong)' },
-    { label: 'Proveedores', value: stats.total_suppliers, color: 'var(--strong)' },
-    { label: 'Ordenes', value: stats.total_orders, color: 'var(--strong)' },
-    { label: 'Confirmadas', value: stats.confirmed_orders, color: 'var(--strong)' },
-    { label: 'Ingresos', value: `$${stats.total_revenue.toFixed(2)}`, color: 'var(--brand-ink)' },
+    { label: 'Vehículos', value: n('total_vehicles'), color: 'var(--strong)' },
+    { label: 'Agencias', value: n('total_depots'), color: 'var(--strong)' },
+    { label: 'Proveedores', value: n('total_suppliers'), color: 'var(--strong)' },
+    { label: 'Usuarios', value: n('total_users'), color: 'var(--strong)' },
+    { label: 'Órdenes', value: n('total_orders'), color: 'var(--strong)' },
+    { label: 'Confirmadas', value: n('confirmed_orders'), color: 'var(--strong)' },
+    { label: 'Finalizadas', value: n('completed_orders'), color: 'var(--strong)' },
+    { label: 'Ingresos totales', value: stats ? dinero(stats.total_revenue ?? 0) : '—', color: 'var(--brand-ink)' },
   ];
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>Dashboard</h1>
-      <div style={{
+      <div className="flex-between mb-2">
+        <h1 style={{ margin: 0 }}>Panel de control</h1>
+        <Link to="/admin/usuarios?nuevo=1" className="btn btn-primary">+ Nuevo cliente</Link>
+      </div>
+      {error && <div className="alert alert-danger">{error}</div>}
+      <div aria-busy={!stats} style={{
         display: 'grid', gap: '1rem',
         gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
       }}>
@@ -38,6 +49,9 @@ export default function AdminDashboard() {
           </div>
         ))}
       </div>
+      <p className="text-muted mt-2" style={{ fontSize: '0.85rem' }}>
+        Los ingresos suman las órdenes confirmadas (en curso y finalizadas); las canceladas no cuentan.
+      </p>
     </div>
   );
 }

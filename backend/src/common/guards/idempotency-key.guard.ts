@@ -24,11 +24,11 @@ export class IdempotencyKeyGuard implements CanActivate {
       throw new HttpException(
         {
           type: 'https://api.booking-hub.com/errors/missing-idempotency-key',
-          title: 'Idempotency-Key header is required',
+          title: 'Falta la cabecera Idempotency-Key',
           status: HttpStatus.BAD_REQUEST,
           detail:
-            'All transactional endpoints require an Idempotency-Key header (UUID v4) ' +
-            'to prevent duplicate operations such as double charges.',
+            'Las operaciones transaccionales requieren la cabecera Idempotency-Key (UUID v4) ' +
+            'para evitar operaciones duplicadas, como cobros dobles.',
           code: 'VALIDATION_FAILED',
         },
         HttpStatus.BAD_REQUEST,
@@ -39,9 +39,9 @@ export class IdempotencyKeyGuard implements CanActivate {
       throw new HttpException(
         {
           type: 'https://api.booking-hub.com/errors/invalid-idempotency-key',
-          title: 'Invalid Idempotency-Key format',
+          title: 'Idempotency-Key inválida',
           status: HttpStatus.BAD_REQUEST,
-          detail: `The Idempotency-Key header must be a valid UUID v4. Received: "${idempotencyKey}".`,
+          detail: `La cabecera Idempotency-Key debe ser un UUID v4 válido. Recibido: "${idempotencyKey}".`,
           code: 'VALIDATION_FAILED',
         },
         HttpStatus.BAD_REQUEST,

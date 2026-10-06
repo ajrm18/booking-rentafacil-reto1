@@ -22,7 +22,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const t = localStorage.getItem('rf_token');
       const u = localStorage.getItem('rf_user');
       if (t && u) { setToken(t); setUser(JSON.parse(u)); }
-    } catch (e) { console.warn('Error leyendo sesion', e); }
+    } catch (e) { console.warn('Error leyendo la sesión', e); }
     finally { setLoading(false); }
   }, []);
 

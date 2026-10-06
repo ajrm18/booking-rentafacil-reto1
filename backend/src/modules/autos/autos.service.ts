@@ -39,6 +39,8 @@ export class AutosService {
   private static readonly TAX_RATE = 0.15;
   private static readonly IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
   private static readonly SEARCH_TOKEN_MAX = 200;
+  private static readonly MAX_DIAS = 90;
+  private static readonly MS_DIA = 24 * 60 * 60 * 1000;
 
   /**
    * Respuestas ya emitidas para modify/cancel, por Idempotency-Key: un reintento con la misma
@@ -69,7 +71,7 @@ export class AutosService {
     if (isNaN(pickup.getTime()) || isNaN(dropoff.getTime()) || dropoff <= pickup) {
       throw new BadRequestException({
         type: 'https://api.booking-hub.com/errors/invalid-route',
-        title: 'Ruta invalida',
+        title: 'Ruta inválida',
         status: 400,
         detail: 'route.dropoff.datetime debe ser posterior a route.pickup.datetime',
         code: 'VALIDATION_FAILED',
@@ -82,7 +84,7 @@ export class AutosService {
       .leftJoinAndSelect('v.supplier', 's')
       .where('v.status = :st', { st: 'AVAILABLE' });
 
-    // Excluir vehiculos con orden CONFIRMED (ocupados)
+    // Excluir vehículos con orden CONFIRMED (ocupados)
     const busyIds = await this.busyVehicleIds();
     if (busyIds.size > 0) qb.andWhere('v.vehicle_id NOT IN (:...busy)', { busy: [...busyIds] });
 
@@ -119,7 +121,7 @@ export class AutosService {
   async getDetails(req: CarDetailsRequestDto): Promise<any> {
     const where: any = {};
     if (Array.isArray(req?.vehicle_ids) && req.vehicle_ids.length > 0) where.vehicle_id = In(req.vehicle_ids);
-    // last_modified: solo vehiculos cambiados desde esa fecha (sincronizacion incremental)
+    // last_modified: solo vehículos cambiados desde esa fecha (sincronización incremental)
     if (req?.last_modified) where.updated_at = MoreThanOrEqual(new Date(req.last_modified));
     const { take, skip, page } = this.pageWindow(req);
     const [vehicles, total] = await this.vehicles.findAndCount({
@@ -202,7 +204,7 @@ export class AutosService {
 
   async getSuppliers(req: SuppliersRequestDto): Promise<any> {
     const { take, skip, page } = this.pageWindow(req);
-    // suppliers vacio o ausente => todos (segun SuppliersRequest.suppliers)
+    // suppliers vacío o ausente => todos (según SuppliersRequest.suppliers)
     const [suppliers, total] = await this.suppliers.findAndCount({
       where: Array.isArray(req?.suppliers) && req.suppliers.length > 0 ? { supplier_id: In(req.suppliers) } : {},
       order: { name: 'ASC' }, take, skip,
@@ -231,21 +233,21 @@ export class AutosService {
       ],
       fuel_policies: [
         { code: 'FULL_TO_FULL', label: 'Lleno a lleno' },
-        { code: 'FULL_TO_EMPTY', label: 'Lleno a vacio' },
+        { code: 'FULL_TO_EMPTY', label: 'Lleno a vacío' },
       ],
       fuel_types: [
         { code: 'gasolina', label: 'Gasolina' },
-        { code: 'diesel', label: 'Diesel' },
-        { code: 'hibrido', label: 'Hibrido' },
-        { code: 'electrico', label: 'Electrico' },
+        { code: 'diesel', label: 'Diésel' },
+        { code: 'hibrido', label: 'Híbrido' },
+        { code: 'electrico', label: 'Eléctrico' },
       ],
       transmission: [
         { code: 'manual', label: 'Manual' },
-        { code: 'automatica', label: 'Automatica' },
+        { code: 'automatica', label: 'Automática' },
       ],
       payment_timings: [
         { code: 'AT_BOOKING', label: 'Al reservar' },
-        { code: 'AT_PICKUP', label: 'Al recoger el vehiculo' },
+        { code: 'AT_PICKUP', label: 'Al recoger el vehículo' },
       ],
       general: {
         min_driver_age: 18,
@@ -267,7 +269,7 @@ export class AutosService {
   async holdOrder(req: OrderHoldRequestDto): Promise<OrderHoldResponseDto> {
     const vehicle = await this.vehicles.findOne({ where: { vehicle_id: req.vehicle_id } });
     if (!vehicle || vehicle.status !== 'AVAILABLE') {
-      throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehiculo ya no esta disponible');
+      throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehículo ya no está disponible');
     }
     this.decodeSearchToken(req.search_token);
 
@@ -288,21 +290,22 @@ export class AutosService {
 
   async previewOrder(req: OrderPreviewRequestDto): Promise<OrderPreviewResponseDto> {
     const vehicle = await this.vehicles.findOne({ where: { vehicle_id: req.vehicle_id } });
-    if (!vehicle) throw new NotFoundException(this.problem('CAR_NO_LONGER_AVAILABLE', 'Vehiculo no encontrado', 404));
+    if (!vehicle) throw new NotFoundException(this.problem('CAR_NO_LONGER_AVAILABLE', 'Vehículo no encontrado', 404));
 
     // La ruta (y por tanto los dias) viaja dentro del search_token emitido por /search
     const search = this.decodeSearchToken(req.search_token);
     const route = search.route;
+    this.assertRangoFechas(route.pickup.datetime, route.dropoff.datetime);
     const days = this.daysBetween(new Date(route.pickup.datetime), new Date(route.dropoff.datetime));
 
     if (req.hold_id) {
       const hold = await this.holds.findOne({ where: { hold_id: req.hold_id } });
       if (!hold) throw new NotFoundException(this.problem('BOOKING_NOT_CONFIRMED', 'Hold no encontrado', 404));
       if (hold.vehicle_id !== req.vehicle_id) {
-        throw new BadRequestException(this.problem('VALIDATION_FAILED', 'El hold pertenece a otro vehiculo', 400));
+        throw new BadRequestException(this.problem('VALIDATION_FAILED', 'El hold pertenece a otro vehículo', 400));
       }
       if (hold.expires_at.getTime() < Date.now()) {
-        throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El bloqueo expiro, vuelva a buscar');
+        throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El bloqueo expiró, vuelva a buscar');
       }
     }
 
@@ -342,16 +345,20 @@ export class AutosService {
     if (!preview) {
       throw new BadRequestException(this.problem('VALIDATION_FAILED', 'order_preview_id no encontrado', 400));
     }
+    if (preview.route?.pickup?.datetime) {
+      // Revalida: una preview creada hace tiempo podría tener ya la fecha de inicio en el pasado
+      this.assertRangoFechas(preview.route.pickup.datetime, preview.route.dropoff.datetime);
+    }
     if (preview.expires_at.getTime() < Date.now()) {
-      throw this.conflict('PRICE_CHANGED', 'La previsualizacion expiro, vuelva a solicitar preview');
+      throw this.conflict('PRICE_CHANGED', 'La previsualizacion expiró, vuelva a solicitar preview');
     }
 
     const vehicle = await this.vehicles.findOne({ where: { vehicle_id: preview.vehicle_id } });
     if (!vehicle || vehicle.status !== 'AVAILABLE') {
-      throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehiculo ya no esta disponible');
+      throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehículo ya no está disponible');
     }
     if (!req.payment_reference || req.payment_reference.length < 4) {
-      throw new BadRequestException(this.problem('PAYMENT_REFERENCE_INVALID', 'payment_reference invalida', 400));
+      throw new BadRequestException(this.problem('PAYMENT_REFERENCE_INVALID', 'payment_reference inválida', 400));
     }
 
     const order = this.orders.create({
@@ -376,13 +383,19 @@ export class AutosService {
       idempotency_key: idempotencyKey,
     });
     const saved = await this.orders.save(order);
-    // Marcamos el vehiculo como RESERVADO
+    // Marcamos el vehículo como RESERVADO
     vehicle.status = 'RESERVED';
     await this.vehicles.save(vehicle);
 
     const detail = this.toOrderDetail(saved);
     this.fireWebhook('CAR_ORDER_CONFIRMED', saved.order_id, detail);
     return detail;
+  }
+
+  /** Órdenes del usuario autenticado (owner_sub = sub del JWT), más recientes primero. */
+  async listMyOrders(auth: AuthContext): Promise<any[]> {
+    const mine = await this.orders.find({ where: { owner_sub: auth.sub }, order: { creation_date: 'DESC' } });
+    return mine.map((o) => this.toOrderDetail(o));
   }
 
   async getOrder(orderId: string, auth: AuthContext): Promise<any> {
@@ -400,12 +413,7 @@ export class AutosService {
       (req.extras_to_add || []).forEach((e) => set.add(e));
       order.extras = Array.from(set);
       if (req.route) {
-        const pickup = new Date(req.route.pickup.datetime);
-        const dropoff = new Date(req.route.dropoff.datetime);
-        if (dropoff <= pickup) {
-          throw new BadRequestException(this.problem('VALIDATION_FAILED',
-            'route.dropoff.datetime debe ser posterior a route.pickup.datetime', 400));
-        }
+        this.assertRangoFechas(req.route.pickup.datetime, req.route.dropoff.datetime);
         order.route_details = req.route as any;
       }
 
@@ -508,7 +516,7 @@ export class AutosService {
   }
 
   /**
-   * El search_token es opaco para el cliente pero transporta el contexto de la busqueda
+   * El search_token es opaco para el cliente pero transporta el contexto de la búsqueda
    * (ruta, moneda, edad del conductor) para que /orders/hold y /orders/preview no tengan
    * que pedirlo de nuevo: base64url de un JSON compacto con prefijo "tok-".
    * Debe caber en holds/order_previews.search_token (varchar 200); si las ubicaciones lo
@@ -539,8 +547,8 @@ export class AutosService {
       }
     } catch { /* cae al error de abajo */ }
     throw new BadRequestException({
-      ...this.problem('VALIDATION_FAILED', 'search_token invalido; realice una nueva busqueda con POST /search', 400),
-      invalidParams: [{ name: 'search_token', reason: 'No corresponde a una busqueda emitida por /search' }],
+      ...this.problem('VALIDATION_FAILED', 'search_token inválido; realice una nueva búsqueda con POST /search', 400),
+      invalidParams: [{ name: 'search_token', reason: 'No corresponde a una búsqueda emitida por /search' }],
     });
   }
 
@@ -560,9 +568,40 @@ export class AutosService {
   }
 
   private async busyVehicleIds(): Promise<Set<string>> {
-    // Un vehiculo con orden CONFIRMED esta ocupado hasta que se cancele (Reto 1 no maneja calendario).
-    const active = await this.orders.find({ where: { status: 'CONFIRMED' }, select: { vehicle_id: true } });
-    return new Set(active.map((o) => o.vehicle_id));
+    // Un vehículo está ocupado mientras tenga una orden CONFIRMED que aún no termina.
+    // Las órdenes ya finalizadas (devolución en el pasado, p. ej. el historial del seed) no lo bloquean.
+    const confirmed = await this.orders.find({
+      where: { status: 'CONFIRMED' }, select: { vehicle_id: true, route_details: true },
+    });
+    const now = Date.now();
+    return new Set(confirmed
+      .filter((o) => { const fin = Date.parse(o.route_details?.dropoff?.datetime); return isNaN(fin) || fin >= now; })
+      .map((o) => o.vehicle_id));
+  }
+
+  /**
+   * Reglas de fechas de una reserva (/orders/preview, /orders/create y modify):
+   * inicio no anterior a hoy en UTC (con 1 día de tolerancia por zonas horarias),
+   * fin posterior al inicio y duración máxima de MAX_DIAS días.
+   */
+  private assertRangoFechas(pickupIso: string, dropoffIso: string): void {
+    const pickup = Date.parse(pickupIso), dropoff = Date.parse(dropoffIso);
+    const fallo = (name: string, reason: string) => new BadRequestException({
+      ...this.problem('VALIDATION_FAILED', reason, 400),
+      title: 'Fechas de alquiler inválidas',
+      invalidParams: [{ name, reason }],
+    });
+    if (isNaN(pickup) || isNaN(dropoff)) throw fallo('route', 'Las fechas de la ruta no son válidas');
+    const hoyUtc = new Date(); hoyUtc.setUTCHours(0, 0, 0, 0);
+    if (pickup < hoyUtc.getTime() - AutosService.MS_DIA) {
+      throw fallo('route.pickup.datetime', 'La fecha de inicio no puede ser en el pasado');
+    }
+    if (dropoff <= pickup) {
+      throw fallo('route.dropoff.datetime', 'La fecha de fin debe ser posterior a la de inicio');
+    }
+    if (this.daysBetween(new Date(pickup), new Date(dropoff)) > AutosService.MAX_DIAS) {
+      throw fallo('route.dropoff.datetime', `El alquiler no puede superar los ${AutosService.MAX_DIAS} días`);
+    }
   }
 
   private generateLocator(): string {

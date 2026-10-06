@@ -14,8 +14,8 @@ export default function Navbar() {
 
   const doLogout = () => { logout(); setOpen(false); nav('/'); };
 
-  // Menu movil accesible por teclado: al abrir, el foco va al primer enlace;
-  // Escape lo cierra y devuelve el foco al boton que lo abrio.
+  // Menú móvil accesible por teclado: al abrir, el foco va al primer enlace;
+  // Escape lo cierra y devuelve el foco al botón que lo abrió.
   useEffect(() => {
     if (!open) return;
     menuRef.current?.querySelector<HTMLElement>('a, button')?.focus();
@@ -56,7 +56,7 @@ export default function Navbar() {
           {user?.role === 'admin' && <NavLink to="/admin" className="nav-link">Admin</NavLink>}
           {user ? (
             <>
-              <span style={{ fontSize: '0.85rem', color: '#9a9da3' }}>{user.email}</span>
+              <span style={{ fontSize: '0.85rem', color: '#9a9da3' }}>{user.first_name || user.email}</span>
               <button className="btn btn-sm nav-btn-outline" onClick={doLogout}>Salir</button>
             </>
           ) : (

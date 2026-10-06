@@ -3,12 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { catalog } from '../api';
 import type { CarSearchItem, Depot, VehicleDetail } from '../types';
 import VehiculoCard from '../components/VehiculoCard';
+import FechaError from '../components/FechaError';
+import { diasEntre, enDias, hayErrores, hoy, validarFechas } from '../utils/reservas';
 
-/** El contrato exige driver.age; la UI no lo solicita y se envia un valor estandar. */
+/** El contrato exige driver.age; la UI no lo solicita y se envía un valor estándar. */
 const EDAD_CONDUCTOR = 25;
-
-const HOY = new Date().toISOString().slice(0, 10);
-const TRES = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
 
 export default function CatalogoPage() {
   const [params, setParams] = useSearchParams();
@@ -21,8 +20,8 @@ export default function CatalogoPage() {
 
   // Filtros locales
   const [depotId, setDepotId] = useState(params.get('depotId') || '');
-  const [ini, setIni] = useState(params.get('ini') || HOY);
-  const [fin, setFin] = useState(params.get('fin') || TRES);
+  const [ini, setIni] = useState(params.get('ini') || hoy());
+  const [fin, setFin] = useState(params.get('fin') || enDias(3));
   const [carType, setCarType] = useState(params.get('carType') || '');
   const [transmision, setTransmision] = useState(params.get('tr') || '');
 
@@ -36,11 +35,9 @@ export default function CatalogoPage() {
   }, []);
 
   const depot = useMemo(() => depots.find((d) => String(d.depot_id) === depotId), [depots, depotId]);
-  const dias = useMemo(() => {
-    if (!ini || !fin) return 0;
-    const d = Math.ceil((new Date(fin).getTime() - new Date(ini).getTime()) / 86400000);
-    return d > 0 ? d : 0;
-  }, [ini, fin]);
+  const dias = useMemo(() => diasEntre(ini, fin), [ini, fin]);
+  const errFechas = validarFechas(ini, fin);
+  const fechasInvalidas = hayErrores(errFechas);
 
   const buscar = async () => {
     setLoading(true); setError('');
@@ -81,13 +78,14 @@ export default function CatalogoPage() {
   };
 
   useEffect(() => {
-    // Sincronizar URL y ejecutar busqueda
+    // Sincronizar URL y ejecutar la búsqueda (solo con fechas válidas: se validan antes de llamar al backend)
     const next = new URLSearchParams();
     if (depotId) next.set('depotId', depotId);
     next.set('ini', ini); next.set('fin', fin);
     if (carType) next.set('carType', carType);
     if (transmision) next.set('tr', transmision);
     setParams(next, { replace: true });
+    if (fechasInvalidas) { setResultados([]); return; }
     if (Object.keys(detalles).length > 0) buscar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depotId, ini, fin, carType, transmision, Object.keys(detalles).length]);
@@ -108,25 +106,30 @@ export default function CatalogoPage() {
           gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
         }}>
           <div>
-            <label className="form-label">Recogida</label>
-            <select className="form-control" value={depotId} onChange={(e) => setDepotId(e.target.value)}>
+            <label className="form-label" htmlFor="cat-depot">Recogida</label>
+            <select id="cat-depot" className="form-control" value={depotId} onChange={(e) => setDepotId(e.target.value)}>
               <option value="">Cualquier agencia</option>
               {depots.map((d) => <option key={d.depot_id} value={d.depot_id}>{d.name}</option>)}
             </select>
           </div>
           <div>
-            <label className="form-label">Fecha inicio</label>
-            <input type="date" className="form-control" value={ini} min={HOY}
-              onChange={(e) => setIni(e.target.value)} />
+            <label className="form-label" htmlFor="cat-ini">Fecha de inicio</label>
+            <input id="cat-ini" type="date" className="form-control" value={ini} min={hoy()}
+              onChange={(e) => setIni(e.target.value)}
+              aria-invalid={!!errFechas.ini} aria-describedby={errFechas.ini ? 'cat-ini-err' : undefined} />
+            <FechaError id="cat-ini-err" mensaje={errFechas.ini} />
           </div>
           <div>
-            <label className="form-label">Fecha fin</label>
-            <input type="date" className="form-control" value={fin} min={ini}
-              onChange={(e) => setFin(e.target.value)} />
+            <label className="form-label" htmlFor="cat-fin">Fecha de fin</label>
+            <input id="cat-fin" type="date" className="form-control" value={fin} min={ini || hoy()}
+              max={ini ? enDias(90, new Date(`${ini}T00:00:00`)) : undefined}
+              onChange={(e) => setFin(e.target.value)}
+              aria-invalid={!!errFechas.fin} aria-describedby={errFechas.fin ? 'cat-fin-err' : undefined} />
+            <FechaError id="cat-fin-err" mensaje={errFechas.fin} />
           </div>
           <div>
-            <label className="form-label">Categoría</label>
-            <select className="form-control" value={carType} onChange={(e) => setCarType(e.target.value)}>
+            <label className="form-label" htmlFor="cat-tipo">Categoría</label>
+            <select id="cat-tipo" className="form-control" value={carType} onChange={(e) => setCarType(e.target.value)}>
               <option value="">Todas</option>
               <option value="Compacto">Económico</option>
               <option value="Sedan">Sedán</option>
@@ -136,8 +139,8 @@ export default function CatalogoPage() {
             </select>
           </div>
           <div>
-            <label className="form-label">Transmisión</label>
-            <select className="form-control" value={transmision} onChange={(e) => setTransmision(e.target.value)}>
+            <label className="form-label" htmlFor="cat-tr">Transmisión</label>
+            <select id="cat-tr" className="form-control" value={transmision} onChange={(e) => setTransmision(e.target.value)}>
               <option value="">Todas</option>
               <option value="manual">Manual</option>
               <option value="automatica">Automática</option>
@@ -151,7 +154,11 @@ export default function CatalogoPage() {
 
       {error && <div className="alert alert-danger">{error}</div>}
 
-      {loading ? (
+      {fechasInvalidas ? (
+        <div className="card"><div className="card-body text-center text-muted">
+          Corrige las fechas para ver los vehículos disponibles.
+        </div></div>
+      ) : loading ? (
         <div className="text-muted text-center" style={{ padding: '2rem' }}>Buscando...</div>
       ) : resultados.length === 0 ? (
         <div className="card"><div className="card-body text-center text-muted">

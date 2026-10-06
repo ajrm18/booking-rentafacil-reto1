@@ -4,3 +4,6 @@ dist/
 .env.local
 *.log
 .DS_Store
+
+# Capturas de fallos de los scripts E2E de UI
+e2e-*-error.png

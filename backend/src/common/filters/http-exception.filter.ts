@@ -30,7 +30,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let body: any = {
       type: 'https://api.booking-hub.com/errors/internal',
-      title: 'Internal server error',
+      title: 'Error interno del servidor',
       status,
       code: 'VALIDATION_FAILED',
     };

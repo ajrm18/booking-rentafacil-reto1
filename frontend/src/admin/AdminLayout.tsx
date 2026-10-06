@@ -2,11 +2,12 @@ import { NavLink, Outlet } from 'react-router-dom';
 
 export default function AdminLayout() {
   const items = [
-    { to: '/admin', label: 'Dashboard', end: true },
-    { to: '/admin/vehiculos', label: 'Vehiculos' },
+    { to: '/admin', label: 'Panel de control', end: true },
+    { to: '/admin/usuarios', label: 'Usuarios' },
+    { to: '/admin/vehiculos', label: 'Vehículos' },
     { to: '/admin/depots', label: 'Agencias' },
     { to: '/admin/suppliers', label: 'Proveedores' },
-    { to: '/admin/orders', label: 'Ordenes' },
+    { to: '/admin/orders', label: 'Órdenes' },
   ];
   return (
     <div className="container" style={{ padding: '2rem 1rem' }}>
@@ -19,7 +20,7 @@ export default function AdminLayout() {
             <div style={{
               fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em',
               color: 'var(--text-muted)', padding: '0.5rem 0.75rem',
-            }}>Panel admin</div>
+            }}>Administración</div>
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
               {items.map((i) => (
                 <NavLink key={i.to} to={i.to} end={i.end}

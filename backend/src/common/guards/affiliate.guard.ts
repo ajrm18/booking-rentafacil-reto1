@@ -18,9 +18,9 @@ export class AffiliateGuard implements CanActivate {
       throw new HttpException(
         {
           type: 'https://api.booking-hub.com/errors/missing-affiliate-id',
-          title: 'X-Affiliate-Id header is required',
+          title: 'Falta la cabecera X-Affiliate-Id',
           status: HttpStatus.BAD_REQUEST,
-          detail: 'This endpoint requires an X-Affiliate-Id header with a positive integer value.',
+          detail: 'Este endpoint requiere la cabecera X-Affiliate-Id con un entero positivo.',
           code: 'VALIDATION_FAILED',
         },
         HttpStatus.BAD_REQUEST,
@@ -32,9 +32,9 @@ export class AffiliateGuard implements CanActivate {
       throw new HttpException(
         {
           type: 'https://api.booking-hub.com/errors/invalid-affiliate-id',
-          title: 'Invalid X-Affiliate-Id format',
+          title: 'X-Affiliate-Id inválido',
           status: HttpStatus.BAD_REQUEST,
-          detail: `X-Affiliate-Id must be a positive integer. Received: "${raw}".`,
+          detail: `X-Affiliate-Id debe ser un entero positivo. Recibido: "${raw}".`,
           code: 'VALIDATION_FAILED',
         },
         HttpStatus.BAD_REQUEST,

@@ -14,12 +14,13 @@ import VehiculosAdmin from './admin/VehiculosAdmin';
 import DepotsAdmin from './admin/DepotsAdmin';
 import SuppliersAdmin from './admin/SuppliersAdmin';
 import OrdersAdmin from './admin/OrdersAdmin';
+import UsuariosAdmin from './admin/UsuariosAdmin';
 import PrivateRoute from './components/PrivateRoute';
 import { useAuth } from './context/AuthContext';
 
 /**
- * Al cambiar de pagina el foco pasa al contenido principal, para que con Tab el usuario
- * siga desde la nueva pagina y no desde el enlace del menu que pulso (y los lectores de
+ * Al cambiar de página el foco pasa al contenido principal, para que con Tab el usuario
+ * siga desde la nueva página y no desde el enlace del menú que pulsó (y los lectores de
  * pantalla anuncien el cambio). No se aplica en la carga inicial.
  */
 function useFocoAlNavegar() {
@@ -66,6 +67,7 @@ export default function App() {
             <Route path="depots" element={<DepotsAdmin />} />
             <Route path="suppliers" element={<SuppliersAdmin />} />
             <Route path="orders" element={<OrdersAdmin />} />
+            <Route path="usuarios" element={<UsuariosAdmin />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

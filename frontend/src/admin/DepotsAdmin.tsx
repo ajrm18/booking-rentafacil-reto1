@@ -26,7 +26,7 @@ export default function DepotsAdmin() {
 
   const editar = (d: any) => { setForm(d); setEditId(d.depot_id); setShow(true); };
   const eliminar = async (id: number) => {
-    if (!confirm('Eliminar agencia?')) return;
+    if (!confirm('¿Eliminar esta agencia?')) return;
     try { await admin.deleteDepot(id); cargar(); }
     catch (e: any) { alert(e?.message || 'Error'); }
   };
@@ -34,7 +34,7 @@ export default function DepotsAdmin() {
   return (
     <div>
       <div className="flex-between mb-2">
-        <h1 style={{ margin: 0 }}>Agencias (Depots)</h1>
+        <h1 style={{ margin: 0 }}>Agencias</h1>
         <button className="btn btn-primary" onClick={() => { setForm({ name: '', city: '', address: '', airport: '', score: 4.5, active: true }); setEditId(null); setShow(true); }}>+ Nueva</button>
       </div>
 
@@ -52,7 +52,7 @@ export default function DepotsAdmin() {
               <input className="form-control" required value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
             </div>
             <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>
-              <label className="form-label">Direccion</label>
+              <label className="form-label">Dirección</label>
               <input className="form-control" value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
             </div>
             <div className="form-group" style={{ margin: 0 }}>
@@ -60,7 +60,7 @@ export default function DepotsAdmin() {
               <input className="form-control" value={form.airport || ''} onChange={(e) => setForm({ ...form, airport: e.target.value })} />
             </div>
             <div className="form-group" style={{ margin: 0 }}>
-              <label className="form-label">Score</label>
+              <label className="form-label">Puntuación</label>
               <input type="number" step="0.1" min="0" max="5" className="form-control" value={form.score} onChange={(e) => setForm({ ...form, score: e.target.value })} />
             </div>
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem' }}>
@@ -73,7 +73,7 @@ export default function DepotsAdmin() {
 
       <div className="table-wrapper">
         <table className="table">
-          <thead><tr><th>ID</th><th>Nombre</th><th>Ciudad</th><th>IATA</th><th>Score</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>Nombre</th><th>Ciudad</th><th>IATA</th><th>Puntuación</th><th></th></tr></thead>
           <tbody>
             {lista.map((d) => (
               <tr key={d.depot_id}>

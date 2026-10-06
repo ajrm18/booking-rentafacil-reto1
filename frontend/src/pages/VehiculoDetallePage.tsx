@@ -6,8 +6,10 @@ import { useAuth } from '../context/AuthContext';
 import { PHOTO_CREDITS } from '../data/photoCredits';
 import { ETIQUETA_CATEGORIA } from '../components/VehiculoCard';
 import PaymentSimulatorModal from '../components/PaymentSimulatorModal';
+import FechaError from '../components/FechaError';
+import { diasEntre, enDias, etiqueta, hayErrores, hoy, validarFechas } from '../utils/reservas';
 
-/** El contrato exige driver.age; la UI no lo solicita y se envia un valor estandar. */
+/** El contrato exige driver.age; la UI no lo solicita y se envía un valor estándar. */
 const EDAD_CONDUCTOR = 25;
 
 const EXTRAS_DISPONIBLES = [
@@ -20,8 +22,6 @@ const ETIQUETAS_DESGLOSE: Record<string, string> = {
   base: 'Alquiler', extras: 'Extras', taxes: 'Impuestos', days: 'Días', price_per_day: 'Precio por día',
 };
 
-const HOY = new Date().toISOString().slice(0, 10);
-const TRES = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
 
 export default function VehiculoDetallePage() {
   const { id } = useParams();
@@ -31,12 +31,12 @@ export default function VehiculoDetallePage() {
 
   const [v, setV] = useState<VehicleDetail | null>(null);
   const [imgActiva, setImgActiva] = useState(0);
-  const [ini, setIni] = useState(params.get('ini') || HOY);
-  const [fin, setFin] = useState(params.get('fin') || TRES);
+  const [ini, setIni] = useState(params.get('ini') || hoy());
+  const [fin, setFin] = useState(params.get('fin') || enDias(3));
   const [extras, setExtras] = useState<string[]>([]);
   const [searchToken, setSearchToken] = useState(params.get('token') || '');
   // El search_token lleva las fechas de la busqueda que lo emitio: si el usuario cambia las
-  // fechas aqui hay que pedir uno nuevo, o el preview cobraria los dias anteriores.
+  // fechas aquí hay que pedir uno nuevo, o el preview cobraría los días anteriores.
   const fechasDelToken = useRef({ ini, fin });
   useEffect(() => {
     if (ini !== fechasDelToken.current.ini || fin !== fechasDelToken.current.fin) setSearchToken('');
@@ -65,11 +65,9 @@ export default function VehiculoDetallePage() {
 
   const imagenes = (v?.images && v.images.length > 0) ? v.images : [v?.main_image_url || ''];
 
-  const dias = (() => {
-    if (!ini || !fin) return 0;
-    const d = Math.ceil((new Date(fin).getTime() - new Date(ini).getTime()) / 86400000);
-    return d > 0 ? d : 0;
-  })();
+  const errFechas = validarFechas(ini, fin);
+  const fechasInvalidas = hayErrores(errFechas);
+  const dias = fechasInvalidas ? 0 : diasEntre(ini, fin);
   const precioEstimado = v ? dias * Number(v.price_per_day) + extras.length * 5 * dias : 0;
 
   const toggleExtra = (code: string) => {
@@ -78,7 +76,7 @@ export default function VehiculoDetallePage() {
 
   const asegurarSearchToken = async (): Promise<string> => {
     if (searchToken) return searchToken;
-    if (!v) throw new Error('Vehiculo no disponible');
+    if (!v) throw new Error('Vehículo no disponible');
     const res = await catalog.search({
       booker: { country: 'ec' }, currency: 'USD', driver: { age: EDAD_CONDUCTOR },
       route: {
@@ -95,7 +93,7 @@ export default function VehiculoDetallePage() {
     setError(''); setLoading(true);
     try {
       if (!user) { nav('/login'); return; }
-      if (!v) return;
+      if (!v || fechasInvalidas) return;
       const tok = await asegurarSearchToken();
       const hold = await orders.hold(v.vehicle_id, tok, EDAD_CONDUCTOR);
       const prev = await orders.preview(v.vehicle_id, tok, hold.hold_id, extras);
@@ -178,9 +176,9 @@ export default function VehiculoDetallePage() {
               <Feature label="Pasajeros" value={String(v.seats)} />
               <Feature label="Puertas" value={String(v.doors)} />
               <Feature label="Maletas" value={String(v.bag_capacity)} />
-              <Feature label="Transmisión" value={v.transmission === 'automatica' ? 'Automática' : v.transmission} />
-              <Feature label="Combustible" value={v.fuel_type === 'hibrido' ? 'Híbrido' : v.fuel_type === 'diesel' ? 'Diésel' : v.fuel_type} />
-              <Feature label="AC" value={v.air_conditioning ? 'Sí' : 'No'} />
+              <Feature label="Transmisión" value={etiqueta(v.transmission)} />
+              <Feature label="Combustible" value={etiqueta(v.fuel_type)} />
+              <Feature label="Aire acondicionado" value={v.air_conditioning ? 'Sí' : 'No'} />
             </div>
 
             {v.description && (
@@ -222,14 +220,19 @@ export default function VehiculoDetallePage() {
                   {error && <div className="alert alert-danger mt-2">{error}</div>}
 
                   <div className="form-group mt-2">
-                    <label className="form-label">Fecha inicio</label>
-                    <input type="date" className="form-control" min={HOY}
-                      value={ini} onChange={(e) => { setIni(e.target.value); setSearchToken(''); }} />
+                    <label className="form-label" htmlFor="det-ini">Fecha de inicio</label>
+                    <input id="det-ini" type="date" className="form-control" min={hoy()}
+                      value={ini} onChange={(e) => { setIni(e.target.value); setSearchToken(''); }}
+                      aria-invalid={!!errFechas.ini} aria-describedby={errFechas.ini ? 'det-ini-err' : undefined} />
+                    <FechaError id="det-ini-err" mensaje={errFechas.ini} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Fecha fin</label>
-                    <input type="date" className="form-control" min={ini}
-                      value={fin} onChange={(e) => { setFin(e.target.value); setSearchToken(''); }} />
+                    <label className="form-label" htmlFor="det-fin">Fecha de fin</label>
+                    <input id="det-fin" type="date" className="form-control" min={ini || hoy()}
+                      max={ini ? enDias(90, new Date(`${ini}T00:00:00`)) : undefined}
+                      value={fin} onChange={(e) => { setFin(e.target.value); setSearchToken(''); }}
+                      aria-invalid={!!errFechas.fin} aria-describedby={errFechas.fin ? 'det-fin-err' : undefined} />
+                    <FechaError id="det-fin-err" mensaje={errFechas.fin} />
                   </div>
 
                   <div className="form-group">
@@ -261,7 +264,7 @@ export default function VehiculoDetallePage() {
                     </div>
                   )}
 
-                  <button className="btn btn-primary btn-block" onClick={previsualizar} disabled={loading || dias <= 0}>
+                  <button className="btn btn-primary btn-block" onClick={previsualizar} disabled={loading || fechasInvalidas || dias <= 0}>
                     {loading ? 'Bloqueando...' : user ? 'Continuar' : 'Ingresar para reservar'}
                   </button>
                 </>
@@ -271,7 +274,7 @@ export default function VehiculoDetallePage() {
                 <>
                   <h3 style={{ marginTop: 0 }}>Confirmar reserva</h3>
                   <div className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-                    Preview ID: <code>{preview.data.order_preview_id}</code>
+                    ID de previsualización: <code>{preview.data.order_preview_id}</code>
                   </div>
 
                   {error && <div className="alert alert-danger">{error}</div>}
@@ -298,7 +301,7 @@ export default function VehiculoDetallePage() {
                       onChange={(e) => setDriver({ ...driver, last_name: e.target.value })} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Email</label>
+                    <label className="form-label">Correo electrónico</label>
                     <input type="email" className="form-control" required value={driver.email}
                       onChange={(e) => setDriver({ ...driver, email: e.target.value })} />
                   </div>

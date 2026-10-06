@@ -1,16 +1,16 @@
 import { api, uuidv4 } from './client';
 import type {
-  CarSearchRequest, CarSearchResponse, Depot, OrderDetail,
+  AdminUser, AdminUserInput, CarSearchRequest, CarSearchResponse, Depot, OrderDetail,
   OrderHoldResponse, OrderPreviewResponse, Supplier, TokenResponse, VehicleDetail,
 } from '../types';
 
-/** Autenticacion demo local */
+/** Autenticación demo local */
 export const auth = {
   login: (email: string, password: string) =>
     api.post<TokenResponse>('/auth/token', { email, password }).then((r) => r.data),
 };
 
-/** Endpoints publicos del contrato GDS Autos Core */
+/** Endpoints públicos del contrato GDS Autos Core */
 export const catalog = {
   search: (req: CarSearchRequest) =>
     api.post<CarSearchResponse>('/search', req).then((r) => r.data),
@@ -26,7 +26,7 @@ export const catalog = {
     api.post<{ request_id: string; data: any }>('/constants', { constants: keys }).then((r) => r.data),
 };
 
-/** Gestion de ordenes segun contrato */
+/** Gestión de órdenes según contrato */
 export const orders = {
   hold: (vehicle_id: string, search_token: string, driverAge?: number) =>
     api.post<OrderHoldResponse>('/orders/hold', {
@@ -56,7 +56,7 @@ export const orders = {
       { headers: { 'Idempotency-Key': uuidv4() } }).then((r) => r.data),
 };
 
-/** BFF de administracion interna (fuera del contrato publico) */
+/** BFF de administración interna (fuera del contrato público) */
 export const admin = {
   stats: () => api.get<any>('/admin/stats').then((r) => r.data),
   listVehicles: () => api.get<any[]>('/admin/vehicles').then((r) => r.data),
@@ -74,7 +74,20 @@ export const admin = {
   listOrders: (status?: string) => api.get<OrderDetail[]>('/admin/orders', { params: { status } }).then((r) => r.data),
 };
 
-/** Cliente CRUD generico para las APIs de administracion (una por tabla). */
+/** Cuenta del usuario autenticado (fuera del contrato): sus órdenes por `sub` del token. */
+export const account = {
+  myOrders: () => api.get<OrderDetail[]>('/account/orders').then((r) => r.data),
+};
+
+/** Usuarios (tabla users): el admin crea, edita y elimina clientes. */
+export const adminUsers = {
+  list: () => api.get<AdminUser[]>('/admin/users').then((r) => r.data),
+  create: (data: AdminUserInput) => api.post<AdminUser>('/admin/users', data).then((r) => r.data),
+  update: (id: string, data: AdminUserInput) => api.put<AdminUser>(`/admin/users/${id}`, data).then((r) => r.data),
+  remove: (id: string) => api.delete(`/admin/users/${id}`),
+};
+
+/** Cliente CRUD genérico para las APIs de administración (una por tabla). */
 const adminCrud = <T = any, Id extends string | number = string>(recurso: string) => ({
   list: (params?: Record<string, any>) => api.get<T[]>(`/admin/${recurso}`, { params }).then((r) => r.data),
   get: (id: Id) => api.get<T>(`/admin/${recurso}/${id}`).then((r) => r.data),
@@ -83,7 +96,7 @@ const adminCrud = <T = any, Id extends string | number = string>(recurso: string
   remove: (id: Id) => api.delete(`/admin/${recurso}/${id}`),
 });
 
-/** Una API por cada tabla de la base de datos (8 tablas). */
+/** Una API por cada tabla de la base de datos (9 tablas). */
 export const adminApis = {
   suppliers: adminCrud<Supplier, number>('suppliers'),
   depots: adminCrud<Depot, number>('depots'),
@@ -93,4 +106,5 @@ export const adminApis = {
   orderPreviews: adminCrud('order-previews'),
   orders: adminCrud<OrderDetail>('orders'),
   webhooks: adminCrud('webhooks'),
+  users: adminCrud<AdminUser>('users'),
 };
