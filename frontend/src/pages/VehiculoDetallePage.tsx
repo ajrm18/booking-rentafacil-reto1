@@ -5,6 +5,7 @@ import type { OrderPreviewResponse, VehicleDetail } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { PHOTO_CREDITS } from '../data/photoCredits';
 import { ETIQUETA_CATEGORIA } from '../components/VehiculoCard';
+import PaymentSimulatorModal from '../components/PaymentSimulatorModal';
 
 /** El contrato exige driver.age; la UI no lo solicita y se envia un valor estandar. */
 const EDAD_CONDUCTOR = 25;
@@ -43,8 +44,8 @@ export default function VehiculoDetallePage() {
 
   const [preview, setPreview] = useState<OrderPreviewResponse | null>(null);
   const [driver, setDriver] = useState({ first_name: '', last_name: '', email: '', phone_number: '' });
-  const [paymentRef, setPaymentRef] = useState('PAY-' + Math.random().toString(36).slice(2, 10).toUpperCase());
-  const [step, setStep] = useState<'form' | 'preview' | 'creating'>('form');
+  // preview -> payment (modal simulador) -> creating (POST /orders/create) -> /reserva/:id
+  const [step, setStep] = useState<'form' | 'preview' | 'payment' | 'creating'>('form');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -105,20 +106,24 @@ export default function VehiculoDetallePage() {
     } finally { setLoading(false); }
   };
 
-  const confirmar = async () => {
+  /** "Confirmar reserva" abre el simulador de pago; la orden se crea al pagar. */
+  const abrirPago = () => { setError(''); setStep('payment'); };
+
+  /** Llamado por el simulador con un payment_reference valido. Si falla, el modal muestra el error. */
+  const pagarYCrear = async (paymentReference: string) => {
     if (!preview) return;
-    setError(''); setLoading(true); setStep('creating');
+    setStep('creating');
     try {
-      const orden = await orders.create(preview.data.order_preview_id, paymentRef, driver);
+      const orden = await orders.create(preview.data.order_preview_id, paymentReference, driver);
       // Guardar order_id en localStorage para que MisReservas del cliente lo recupere
       const prev: string[] = JSON.parse(localStorage.getItem('rf_myorders') || '[]');
       if (!prev.includes(orden.order_id)) prev.unshift(orden.order_id);
       localStorage.setItem('rf_myorders', JSON.stringify(prev.slice(0, 50)));
       nav(`/reserva/${orden.order_id}`);
     } catch (e: any) {
-      setError(e?.message || 'Error al crear la reserva');
-      setStep('preview');
-    } finally { setLoading(false); }
+      setStep('payment');
+      throw new Error(e?.message || 'Error al crear la reserva');
+    }
   };
 
   if (!v) return <div className="container" style={{ padding: '2rem 1rem' }}>Cargando...</div>;
@@ -262,7 +267,7 @@ export default function VehiculoDetallePage() {
                 </>
               )}
 
-              {(step === 'preview' || step === 'creating') && preview && (
+              {step !== 'form' && preview && (
                 <>
                   <h3 style={{ marginTop: 0 }}>Confirmar reserva</h3>
                   <div className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}>
@@ -302,15 +307,9 @@ export default function VehiculoDetallePage() {
                     <input className="form-control" value={driver.phone_number}
                       onChange={(e) => setDriver({ ...driver, phone_number: e.target.value })} />
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Referencia de pago</label>
-                    <input className="form-control" required value={paymentRef}
-                      onChange={(e) => setPaymentRef(e.target.value)} />
-                  </div>
-
-                  <button className="btn btn-primary btn-block" onClick={confirmar}
-                    disabled={loading || !driver.first_name || !driver.last_name || !driver.email}>
-                    {loading ? 'Procesando...' : 'Confirmar reserva'}
+                  <button className="btn btn-primary btn-block" onClick={abrirPago}
+                    disabled={step !== 'preview' || !driver.first_name || !driver.last_name || !driver.email}>
+                    Confirmar reserva
                   </button>
                   <button className="btn btn-outline btn-block mt-1" onClick={() => setStep('form')}>
                     Volver
@@ -321,6 +320,15 @@ export default function VehiculoDetallePage() {
           </div>
         </aside>
       </div>
+
+      {(step === 'payment' || step === 'creating') && preview && (
+        <PaymentSimulatorModal
+          total={preview.data.total_price}
+          currency={preview.data.currency}
+          onPay={pagarYCrear}
+          onClose={() => setStep('preview')}
+        />
+      )}
 
       <style>{`
         @media (max-width: 820px) {

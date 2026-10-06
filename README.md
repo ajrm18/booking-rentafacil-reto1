@@ -231,6 +231,7 @@ npm run dev
 - [x] Documento tecnico (`docs/documento-tecnico.docx`)
 - [x] Frontend responsivo (adaptable a cualquier pantalla)
 - [x] Navegable solo con teclado (Tab / Shift+Tab / Enter / Escape): enlace "Saltar al contenido", foco visible, menu movil accesible
+- [x] Simulador de pagos antes de `/orders/create` (Luhn, MM/AA, CVV; tarjeta de prueba `4111 1111 1111 1111`, `12/30`, CVV `123`). Prueba E2E de UI: `cd frontend && npm run e2e:ui [URL]`
 - [x] Cumplimiento 1:1 con `contracts/autos-openapi.yaml`
 - [x] Headers requeridos: `X-Affiliate-Id`, `Idempotency-Key`
 - [x] OAuth2 con scopes: `autos:read`, `autos:book`, `autos:cancel`, `autos:webhooks`
