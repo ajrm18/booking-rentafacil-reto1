@@ -8,6 +8,7 @@ import { OAuth2Guard, RequireScopes } from '../../common/guards/oauth2.guard';
 import { Depot } from './entities/depot.entity';
 import { Supplier } from './entities/supplier.entity';
 import { Vehicle } from './entities/vehicle.entity';
+import { VehicleImage } from './entities/vehicle-image.entity';
 import { Order } from './entities/order.entity';
 
 /**
@@ -24,6 +25,7 @@ import { Order } from './entities/order.entity';
 export class AdminController {
   constructor(
     @InjectRepository(Vehicle) private readonly vehicles: Repository<Vehicle>,
+    @InjectRepository(VehicleImage) private readonly images: Repository<VehicleImage>,
     @InjectRepository(Depot) private readonly depots: Repository<Depot>,
     @InjectRepository(Supplier) private readonly suppliers: Repository<Supplier>,
     @InjectRepository(Order) private readonly orders: Repository<Order>,
@@ -45,11 +47,32 @@ export class AdminController {
 
   @Put('vehicles/:id')
   @ApiOperation({ summary: 'Actualizar un vehiculo (admin)' })
-  async updateVehicle(@Param('id') id: string, @Body() body: Partial<Vehicle>) {
+  async updateVehicle(
+    @Param('id') id: string,
+    @Body() body: Partial<Vehicle> & { gallery?: string[] },
+  ) {
     const v = await this.vehicles.findOne({ where: { vehicle_id: id } });
     if (!v) return { error: 'not_found' };
-    Object.assign(v, body);
-    return this.vehicles.save(v);
+    // La galeria se gestiona aparte: `gallery` reemplaza todas las fotos; si solo cambia
+    // main_image_url se actualiza la foto principal (posicion 0) para mantenerlas en sincronia.
+    const { gallery, images: _images, ...campos } = body;
+    const mainAnterior = v.main_image_url;
+    Object.assign(v, campos);
+    const saved = await this.vehicles.save(v);
+
+    if (Array.isArray(gallery) && gallery.length > 0) {
+      await this.images.delete({ vehicle_id: id });
+      await this.images.save(gallery.map((url, position) => this.images.create({ url, position, vehicle_id: id })));
+      if (!campos.main_image_url) {
+        saved.main_image_url = gallery[0];
+        await this.vehicles.save(saved);
+      }
+    } else if (campos.main_image_url && campos.main_image_url !== mainAnterior) {
+      const principal = await this.images.findOne({ where: { vehicle_id: id, position: 0 } });
+      if (principal) await this.images.update(principal.id, { url: campos.main_image_url });
+      else await this.images.save(this.images.create({ url: campos.main_image_url, position: 0, vehicle_id: id }));
+    }
+    return this.vehicles.findOne({ where: { vehicle_id: id }, relations: ['images'] });
   }
 
   @Delete('vehicles/:id')

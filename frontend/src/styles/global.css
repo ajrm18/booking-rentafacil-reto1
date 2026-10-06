@@ -1,12 +1,18 @@
 :root {
-  --brand: #0b6cff;
-  --brand-dark: #084bb3;
-  --brand-light: #e6f0ff;
-  --bg: #f5f7fa;
+  /* Paleta: negro carbon + acento ambar */
+  --ink: #0b0d10;
+  --ink-2: #15181d;
+  --ink-3: #23272e;
+  --brand: #f0a500;
+  --brand-dark: #d18f00;
+  --brand-light: #fff4d6;
+  --brand-ink: #8a5a00;
+  --on-brand: #0b0d10;
+  --bg: #f4f4f2;
   --surface: #ffffff;
-  --border: #e2e8f0;
-  --text: #0f172a;
-  --text-muted: #64748b;
+  --border: #e4e4e0;
+  --text: #0b0d10;
+  --text-muted: #5f6368;
   --success: #16a34a;
   --warning: #f59e0b;
   --danger: #dc2626;
@@ -24,14 +30,15 @@
 html, body {
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-    Ubuntu, Cantarell, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Oxygen, Ubuntu, Cantarell, sans-serif;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
 }
 
-a { color: var(--brand); text-decoration: none; }
+a { color: var(--brand-ink); text-decoration: none; }
+h1, h2, h3 { letter-spacing: -0.02em; }
 a:hover { text-decoration: underline; }
 
 button {
@@ -64,12 +71,14 @@ img { max-width: 100%; display: block; }
   border: 1px solid transparent;
   white-space: nowrap;
 }
-.btn-primary { background: var(--brand); color: #fff; }
-.btn-primary:hover { background: var(--brand-dark); }
+.btn-primary { background: var(--brand); color: var(--on-brand); }
+.btn-primary:hover { background: var(--brand-dark); text-decoration: none; }
+.btn-dark { background: var(--ink); color: #fff; }
+.btn-dark:hover { background: var(--ink-3); text-decoration: none; }
 .btn-outline { border-color: var(--border); background: #fff; color: var(--text); }
-.btn-outline:hover { border-color: var(--brand); color: var(--brand); }
+.btn-outline:hover { border-color: var(--ink); color: var(--ink); text-decoration: none; }
 .btn-ghost { color: var(--text); }
-.btn-ghost:hover { background: var(--brand-light); color: var(--brand); }
+.btn-ghost:hover { background: #ececea; color: var(--ink); }
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover { opacity: 0.9; }
 .btn-success { background: var(--success); color: #fff; }
@@ -108,8 +117,8 @@ img { max-width: 100%; display: block; }
 }
 .form-control:focus {
   outline: none;
-  border-color: var(--brand);
-  box-shadow: 0 0 0 3px rgba(11, 108, 255, 0.15);
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(240, 165, 0, 0.25);
 }
 textarea.form-control { min-height: 90px; resize: vertical; }
 select.form-control { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><path fill='%2364748b' d='M5 8l5 5 5-5z'/></svg>"); background-repeat: no-repeat; background-position: right 0.5rem center; padding-right: 2rem; }
@@ -129,7 +138,7 @@ select.form-control { appearance: none; background-image: url("data:image/svg+xm
   font-size: 0.75rem;
   font-weight: 600;
   background: var(--brand-light);
-  color: var(--brand);
+  color: var(--brand-ink);
 }
 .badge-success { background: #dcfce7; color: var(--success); }
 .badge-warning { background: #fef3c7; color: var(--warning); }
@@ -174,7 +183,30 @@ select.form-control { appearance: none; background-image: url("data:image/svg+xm
 }
 .alert-danger { background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
 .alert-success { background: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
-.alert-info { background: var(--brand-light); color: var(--brand); border: 1px solid #bfdbfe; }
+.alert-info { background: var(--brand-light); color: var(--brand-ink); border: 1px solid #f5d68a; }
+
+/* Eyebrow / etiquetas de seccion */
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-ink);
+}
+.price { font-size: 1.35rem; font-weight: 800; color: var(--text); letter-spacing: -0.02em; }
+
+/* Tarjeta de vehiculo */
+.veh-card { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+.veh-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: #cfcfca; }
+.veh-card img { transition: transform 0.4s ease; }
+.veh-card:hover img { transform: scale(1.03); }
+
+/* Resumen de precios */
+.summary {
+  background: #f7f7f5; border: 1px solid var(--border);
+  padding: 0.85rem; border-radius: var(--radius-sm); margin-bottom: 1rem;
+}
+.summary-total { font-weight: 700; border-top: 1px solid var(--border); padding-top: 0.5rem; margin-top: 0.5rem; }
 
 /* Utilidades */
 .text-muted { color: var(--text-muted); }

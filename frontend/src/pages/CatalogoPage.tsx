@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { catalog } from '../api';
 import type { CarSearchItem, Depot, VehicleDetail } from '../types';
+import VehiculoCard from '../components/VehiculoCard';
+
+/** El contrato exige driver.age; la UI no lo solicita y se envia un valor estandar. */
+const EDAD_CONDUCTOR = 25;
 
 const HOY = new Date().toISOString().slice(0, 10);
 const TRES = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
@@ -19,7 +23,6 @@ export default function CatalogoPage() {
   const [depotId, setDepotId] = useState(params.get('depotId') || '');
   const [ini, setIni] = useState(params.get('ini') || HOY);
   const [fin, setFin] = useState(params.get('fin') || TRES);
-  const [edad, setEdad] = useState(Number(params.get('edad') || 25));
   const [carType, setCarType] = useState(params.get('carType') || '');
   const [transmision, setTransmision] = useState(params.get('tr') || '');
 
@@ -48,7 +51,7 @@ export default function CatalogoPage() {
       const res = await catalog.search({
         booker: { country: 'ec' },
         currency: 'USD',
-        driver: { age: edad },
+        driver: { age: EDAD_CONDUCTOR },
         route: {
           pickup: {
             datetime: `${ini}T10:00:00Z`,
@@ -72,7 +75,7 @@ export default function CatalogoPage() {
       setResultados(res.data);
       setSearchToken(res.search_token);
     } catch (e: any) {
-      setError(e?.message || 'Error en la busqueda');
+      setError(e?.message || 'Error en la búsqueda');
       setResultados([]);
     } finally { setLoading(false); }
   };
@@ -81,21 +84,22 @@ export default function CatalogoPage() {
     // Sincronizar URL y ejecutar busqueda
     const next = new URLSearchParams();
     if (depotId) next.set('depotId', depotId);
-    next.set('ini', ini); next.set('fin', fin); next.set('edad', String(edad));
+    next.set('ini', ini); next.set('fin', fin);
     if (carType) next.set('carType', carType);
     if (transmision) next.set('tr', transmision);
     setParams(next, { replace: true });
     if (Object.keys(detalles).length > 0) buscar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depotId, ini, fin, edad, carType, transmision, Object.keys(detalles).length]);
+  }, [depotId, ini, fin, carType, transmision, Object.keys(detalles).length]);
 
   const limpiar = () => { setDepotId(''); setCarType(''); setTransmision(''); };
 
   return (
     <div className="container" style={{ padding: '2rem 1rem' }}>
-      <h1 style={{ marginTop: 0 }}>Catalogo de vehiculos</h1>
-      <p className="text-muted">
-        Resultados obtenidos con <code>POST /api/v1/search</code> segun contrato oficial.
+      <div className="eyebrow">Flota disponible</div>
+      <h1 style={{ margin: '0.35rem 0 0.25rem' }}>Catálogo de vehículos</h1>
+      <p className="text-muted" style={{ marginTop: 0 }}>
+        Filtra por agencia, fechas, categoría y transmisión.
       </p>
 
       <div className="card mb-3">
@@ -121,27 +125,22 @@ export default function CatalogoPage() {
               onChange={(e) => setFin(e.target.value)} />
           </div>
           <div>
-            <label className="form-label">Edad conductor</label>
-            <input type="number" className="form-control" min={18} max={99}
-              value={edad} onChange={(e) => setEdad(Number(e.target.value))} />
-          </div>
-          <div>
-            <label className="form-label">Categoria</label>
+            <label className="form-label">Categoría</label>
             <select className="form-control" value={carType} onChange={(e) => setCarType(e.target.value)}>
               <option value="">Todas</option>
-              <option value="Compacto">Compacto</option>
-              <option value="Sedan">Sedan</option>
+              <option value="Compacto">Económico</option>
+              <option value="Sedan">Sedán</option>
               <option value="SUV">SUV</option>
               <option value="Camioneta">Camioneta</option>
-              <option value="Lujo">Lujo</option>
+              <option value="Lujo">Premium</option>
             </select>
           </div>
           <div>
-            <label className="form-label">Transmision</label>
+            <label className="form-label">Transmisión</label>
             <select className="form-control" value={transmision} onChange={(e) => setTransmision(e.target.value)}>
               <option value="">Todas</option>
               <option value="manual">Manual</option>
-              <option value="automatica">Automatica</option>
+              <option value="automatica">Automática</option>
             </select>
           </div>
           <div style={{ display: 'flex', alignItems: 'end' }}>
@@ -156,60 +155,18 @@ export default function CatalogoPage() {
         <div className="text-muted text-center" style={{ padding: '2rem' }}>Buscando...</div>
       ) : resultados.length === 0 ? (
         <div className="card"><div className="card-body text-center text-muted">
-          No hay vehiculos disponibles con esos filtros.
+          No hay vehículos disponibles con esos filtros.
         </div></div>
       ) : (
         <>
-          <div className="text-muted mb-2">{resultados.length} vehiculos disponibles &middot; {dias} dia(s)</div>
+          <div className="text-muted mb-2"><b style={{ color: 'var(--text)' }}>{resultados.length}</b> vehículos disponibles &middot; {dias} {dias === 1 ? 'día' : 'días'}</div>
           <div className="grid">
             {resultados.map((r) => {
               const d = detalles[r.vehicle_id];
               if (!d) return null;
               return (
-                <Link key={r.vehicle_id} to={`/vehiculos/${r.vehicle_id}?token=${searchToken}&ini=${ini}&fin=${fin}&edad=${edad}`}
-                  style={{ textDecoration: 'none', color: 'inherit' }}>
-                  <div className="card" style={{
-                    overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%',
-                    transition: 'transform 0.15s', cursor: 'pointer',
-                  }}
-                    onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-4px)'}
-                    onMouseLeave={(e) => e.currentTarget.style.transform = ''}>
-                    <div style={{ aspectRatio: '16 / 10', overflow: 'hidden', background: '#f1f5f9' }}>
-                      <img src={d.main_image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
-                    </div>
-                    <div className="card-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      <div className="flex-between">
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>{d.make} {d.model}</div>
-                          <div className="text-muted" style={{ fontSize: '0.85rem' }}>
-                            {d.year} &middot; {d.car_type} &middot; {d.supplier?.name}
-                          </div>
-                        </div>
-                        <span className="badge badge-success">Disponible</span>
-                      </div>
-                      <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-                        <span>{d.seats} pasajeros</span><span>&middot;</span>
-                        <span>{d.transmission}</span><span>&middot;</span>
-                        <span>{d.fuel_type}</span>
-                      </div>
-                      <div style={{
-                        marginTop: 'auto', paddingTop: '0.75rem',
-                        borderTop: '1px solid var(--border)',
-                        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap',
-                      }}>
-                        <div>
-                          <span style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--brand)' }}>
-                            ${Number(d.price_per_day).toFixed(2)}
-                          </span>
-                          <span className="text-muted" style={{ fontSize: '0.85rem' }}>/ dia</span>
-                        </div>
-                        <div className="text-muted" style={{ fontSize: '0.8rem' }}>
-                          Total {dias}d: <b>${r.price.toFixed(2)}</b>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </Link>
+                <VehiculoCard key={r.vehicle_id} vehiculo={d} precioTotal={r.price} dias={dias}
+                  extraQuery={`token=${searchToken}&ini=${ini}&fin=${fin}`} />
               );
             })}
           </div>

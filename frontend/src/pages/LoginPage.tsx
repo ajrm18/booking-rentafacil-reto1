@@ -25,9 +25,10 @@ export default function LoginPage() {
 
   return (
     <div className="container" style={{ padding: '3rem 1rem', maxWidth: 460 }}>
-      <div className="card">
-        <div className="card-body">
-          <h1 style={{ marginTop: 0 }}>Ingresar</h1>
+      <div className="card" style={{ borderTop: '3px solid var(--brand)' }}>
+        <div className="card-body" style={{ padding: '1.75rem' }}>
+          <div className="eyebrow">Mi cuenta</div>
+          <h1 style={{ margin: '0.3rem 0 0.5rem' }}>Ingresar</h1>
           <p className="text-muted">
             Autenticacion OAuth2 (equivalente al Authorization Server del Booking Hub central).
             El token JWT recibido incluye los scopes autos:read, autos:book, autos:cancel.

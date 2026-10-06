@@ -11,7 +11,7 @@ export default function Navbar() {
 
   return (
     <header style={{
-      background: '#fff', borderBottom: '1px solid var(--border)',
+      background: 'var(--ink)', borderBottom: '1px solid var(--ink-3)',
       position: 'sticky', top: 0, zIndex: 20,
     }}>
       <div className="container" style={{
@@ -20,26 +20,26 @@ export default function Navbar() {
       }}>
         <Link to="/" style={{
           display: 'flex', alignItems: 'center', gap: '0.5rem',
-          fontWeight: 800, fontSize: '1.2rem', color: 'var(--text)',
+          fontWeight: 800, fontSize: '1.2rem', color: '#fff',
           textDecoration: 'none',
         }}>
           <span style={{
             width: 32, height: 32, borderRadius: 8, background: 'var(--brand)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: '1rem',
+            color: 'var(--on-brand)', fontSize: '0.9rem', letterSpacing: '-0.02em',
           }}>RF</span>
           RentaFacil <span style={{ color: 'var(--brand)' }}>EC</span>
         </Link>
 
         <nav className="nav-desktop" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <NavLink to="/" end className="nav-link">Inicio</NavLink>
-          <NavLink to="/catalogo" className="nav-link">Catalogo</NavLink>
+          <NavLink to="/catalogo" className="nav-link">Catálogo</NavLink>
           {user && <NavLink to="/mis-reservas" className="nav-link">Mis reservas</NavLink>}
           {user?.role === 'admin' && <NavLink to="/admin" className="nav-link">Admin</NavLink>}
           {user ? (
             <>
-              <span className="text-muted" style={{ fontSize: '0.9rem' }}>{user.email}</span>
-              <button className="btn btn-outline btn-sm" onClick={doLogout}>Salir</button>
+              <span style={{ fontSize: '0.85rem', color: '#9a9da3' }}>{user.email}</span>
+              <button className="btn btn-sm nav-btn-outline" onClick={doLogout}>Salir</button>
             </>
           ) : (
             <Link to="/login" className="btn btn-primary btn-sm">Ingresar</Link>
@@ -47,25 +47,25 @@ export default function Navbar() {
         </nav>
 
         <button className="nav-toggle" onClick={() => setOpen(!open)} aria-label="Menu"
-          style={{ display: 'none', padding: 8, borderRadius: 8, border: '1px solid var(--border)', background: '#fff' }}>
+          style={{ display: 'none', padding: '12px 8px', borderRadius: 8, border: '1px solid var(--ink-3)', background: 'transparent' }}>
           <span style={{
-            display: 'block', width: 22, height: 2, background: 'var(--text)',
-            boxShadow: '0 -6px 0 var(--text), 0 6px 0 var(--text)',
+            display: 'block', width: 22, height: 2, background: '#fff',
+            boxShadow: '0 -6px 0 #fff, 0 6px 0 #fff',
           }} />
         </button>
       </div>
 
       {open && (
         <div className="nav-mobile" style={{
-          borderTop: '1px solid var(--border)', padding: '0.5rem 1rem 1rem',
-          display: 'flex', flexDirection: 'column', gap: '0.25rem', background: '#fff',
+          borderTop: '1px solid var(--ink-3)', padding: '0.5rem 1rem 1rem',
+          display: 'flex', flexDirection: 'column', gap: '0.25rem', background: 'var(--ink)',
         }}>
           <NavLink to="/" end className="nav-link-mobile" onClick={() => setOpen(false)}>Inicio</NavLink>
-          <NavLink to="/catalogo" className="nav-link-mobile" onClick={() => setOpen(false)}>Catalogo</NavLink>
+          <NavLink to="/catalogo" className="nav-link-mobile" onClick={() => setOpen(false)}>Catálogo</NavLink>
           {user && <NavLink to="/mis-reservas" className="nav-link-mobile" onClick={() => setOpen(false)}>Mis reservas</NavLink>}
           {user?.role === 'admin' && <NavLink to="/admin" className="nav-link-mobile" onClick={() => setOpen(false)}>Admin</NavLink>}
           {user ? (
-            <button className="btn btn-outline mt-1" onClick={doLogout}>Salir ({user.email})</button>
+            <button className="btn nav-btn-outline mt-1" onClick={doLogout}>Salir ({user.email})</button>
           ) : (
             <Link to="/login" className="btn btn-primary btn-block mt-1" onClick={() => setOpen(false)}>Ingresar</Link>
           )}
@@ -74,13 +74,15 @@ export default function Navbar() {
 
       <style>{`
         .nav-link, .nav-link-mobile {
-          color: var(--text); text-decoration: none; font-size: 0.95rem;
-          padding: 0.4rem 0.65rem; border-radius: 6px;
+          color: #c9cbcf; text-decoration: none; font-size: 0.93rem; font-weight: 500;
+          padding: 0.4rem 0.2rem; margin: 0 0.45rem; border-bottom: 2px solid transparent;
         }
-        .nav-link.active, .nav-link-mobile.active {
-          background: var(--brand-light); color: var(--brand);
-        }
-        .nav-link-mobile { padding: 0.65rem 0.5rem; border-bottom: 1px solid var(--border); }
+        .nav-link:hover, .nav-link-mobile:hover { color: #fff; text-decoration: none; }
+        .nav-link.active { color: #fff; border-bottom-color: var(--brand); }
+        .nav-link-mobile.active { color: var(--brand); }
+        .nav-link-mobile { padding: 0.75rem 0.25rem; margin: 0; border-bottom: 1px solid var(--ink-3); }
+        .nav-btn-outline { border: 1px solid var(--ink-3); color: #fff; }
+        .nav-btn-outline:hover { border-color: #fff; text-decoration: none; }
         @media (max-width: 900px) {
           .nav-desktop { display: none !important; }
           .nav-toggle { display: inline-flex !important; }

@@ -10,12 +10,12 @@ export default function AdminDashboard() {
   useEffect(() => { admin.stats().then(setStats).catch(() => {}); }, []);
 
   const cards = [
-    { label: 'Vehiculos', value: stats.total_vehicles, color: '#0b6cff' },
-    { label: 'Agencias', value: stats.total_depots, color: '#0ea5e9' },
-    { label: 'Proveedores', value: stats.total_suppliers, color: '#ec4899' },
-    { label: 'Ordenes', value: stats.total_orders, color: '#16a34a' },
-    { label: 'Confirmadas', value: stats.confirmed_orders, color: '#f59e0b' },
-    { label: 'Ingresos', value: `$${stats.total_revenue.toFixed(2)}`, color: '#059669' },
+    { label: 'Vehiculos', value: stats.total_vehicles, color: '#0b0d10' },
+    { label: 'Agencias', value: stats.total_depots, color: '#0b0d10' },
+    { label: 'Proveedores', value: stats.total_suppliers, color: '#0b0d10' },
+    { label: 'Ordenes', value: stats.total_orders, color: '#0b0d10' },
+    { label: 'Confirmadas', value: stats.confirmed_orders, color: '#0b0d10' },
+    { label: 'Ingresos', value: `$${stats.total_revenue.toFixed(2)}`, color: '#8a5a00' },
   ];
 
   return (
@@ -26,9 +26,9 @@ export default function AdminDashboard() {
         gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
       }}>
         {cards.map((c) => (
-          <div key={c.label} className="card">
+          <div key={c.label} className="card" style={{ borderTop: '3px solid var(--brand)' }}>
             <div className="card-body">
-              <div className="text-muted" style={{ fontSize: '0.8rem', textTransform: 'uppercase' }}>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
                 {c.label}
               </div>
               <div style={{ fontSize: '1.75rem', fontWeight: 800, color: c.color, marginTop: '0.25rem' }}>

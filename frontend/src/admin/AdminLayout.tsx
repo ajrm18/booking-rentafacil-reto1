@@ -36,7 +36,7 @@ export default function AdminLayout() {
         .admin-link { padding: 0.55rem 0.75rem; border-radius: 6px;
           color: var(--text); text-decoration: none; font-size: 0.95rem; }
         .admin-link:hover { background: #f1f5f9; }
-        .admin-link.active { background: var(--brand-light); color: var(--brand); font-weight: 600; }
+        .admin-link.active { background: var(--ink); color: #fff; font-weight: 600; }
         @media (max-width: 800px) { .admin-grid { grid-template-columns: 1fr !important; } }
       `}</style>
     </div>

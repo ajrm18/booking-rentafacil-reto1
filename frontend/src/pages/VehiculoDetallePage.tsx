@@ -3,12 +3,21 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { catalog, orders } from '../api';
 import type { OrderPreviewResponse, VehicleDetail } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { PHOTO_CREDITS } from '../data/photoCredits';
+import { ETIQUETA_CATEGORIA } from '../components/VehiculoCard';
+
+/** El contrato exige driver.age; la UI no lo solicita y se envia un valor estandar. */
+const EDAD_CONDUCTOR = 25;
 
 const EXTRAS_DISPONIBLES = [
-  { code: 'GPS', label: 'GPS ($5/dia)' },
-  { code: 'SILLA_BEBE', label: 'Silla de bebe ($5/dia)' },
-  { code: 'CONDUCTOR_ADICIONAL', label: 'Conductor adicional ($5/dia)' },
+  { code: 'GPS', label: 'GPS ($5/día)' },
+  { code: 'SILLA_BEBE', label: 'Silla de bebé ($5/día)' },
+  { code: 'CONDUCTOR_ADICIONAL', label: 'Conductor adicional ($5/día)' },
 ];
+
+const ETIQUETAS_DESGLOSE: Record<string, string> = {
+  base: 'Alquiler', extras: 'Extras', taxes: 'Impuestos', days: 'Días', price_per_day: 'Precio por día',
+};
 
 const HOY = new Date().toISOString().slice(0, 10);
 const TRES = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
@@ -23,7 +32,6 @@ export default function VehiculoDetallePage() {
   const [imgActiva, setImgActiva] = useState(0);
   const [ini, setIni] = useState(params.get('ini') || HOY);
   const [fin, setFin] = useState(params.get('fin') || TRES);
-  const [edad, setEdad] = useState(Number(params.get('edad') || 25));
   const [extras, setExtras] = useState<string[]>([]);
   const [searchToken, setSearchToken] = useState(params.get('token') || '');
 
@@ -65,7 +73,7 @@ export default function VehiculoDetallePage() {
     if (searchToken) return searchToken;
     if (!v) throw new Error('Vehiculo no disponible');
     const res = await catalog.search({
-      booker: { country: 'ec' }, currency: 'USD', driver: { age: edad },
+      booker: { country: 'ec' }, currency: 'USD', driver: { age: EDAD_CONDUCTOR },
       route: {
         pickup: { datetime: `${ini}T10:00:00Z`, location: {} },
         dropoff: { datetime: `${fin}T10:00:00Z`, location: {} },
@@ -81,7 +89,7 @@ export default function VehiculoDetallePage() {
       if (!user) { nav('/login'); return; }
       if (!v) return;
       const tok = await asegurarSearchToken();
-      const hold = await orders.hold(v.vehicle_id, tok, edad);
+      const hold = await orders.hold(v.vehicle_id, tok, EDAD_CONDUCTOR);
       const prev = await orders.preview(v.vehicle_id, tok, hold.hold_id, extras);
       setPreview(prev);
       setStep('preview');
@@ -115,9 +123,17 @@ export default function VehiculoDetallePage() {
       <div style={{ display: 'grid', gap: '1.5rem', gridTemplateColumns: 'minmax(280px, 1.4fr) minmax(260px, 1fr)' }} className="detalle-grid">
         {/* Galeria + Info */}
         <div>
-          <div style={{ aspectRatio: '16 / 10', borderRadius: 'var(--radius)', overflow: 'hidden', background: '#f1f5f9' }}>
-            <img src={imagenes[imgActiva]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <div style={{ aspectRatio: '16 / 10', borderRadius: 'var(--radius)', overflow: 'hidden', background: '#e9e9e6' }}>
+            <img src={imagenes[imgActiva]} alt={`${v.make} ${v.model}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           </div>
+          {PHOTO_CREDITS[imagenes[imgActiva]] && (
+            <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: '0.35rem', textAlign: 'right' }}>
+              Foto: {PHOTO_CREDITS[imagenes[imgActiva]].author} &middot;{' '}
+              <a href={PHOTO_CREDITS[imagenes[imgActiva]].source} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                {PHOTO_CREDITS[imagenes[imgActiva]].license}
+              </a>, Wikimedia Commons
+            </div>
+          )}
           {imagenes.length > 1 && (
             <div style={{
               display: 'grid', gap: '0.5rem', marginTop: '0.5rem',
@@ -126,7 +142,7 @@ export default function VehiculoDetallePage() {
               {imagenes.map((img, i) => (
                 <button key={i} onClick={() => setImgActiva(i)} style={{
                   aspectRatio: '4 / 3', borderRadius: 8, overflow: 'hidden',
-                  border: imgActiva === i ? '2px solid var(--brand)' : '1px solid var(--border)',
+                  border: imgActiva === i ? '2px solid var(--ink)' : '1px solid var(--border)', opacity: imgActiva === i ? 1 : 0.75,
                   padding: 0, cursor: 'pointer',
                 }}>
                   <img src={img} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -136,9 +152,10 @@ export default function VehiculoDetallePage() {
           )}
 
           <div style={{ marginTop: '1.5rem' }}>
-            <h1 style={{ margin: 0 }}>{v.make} {v.model}</h1>
+            <div className="eyebrow">{ETIQUETA_CATEGORIA[v.car_type] || v.car_type}</div>
+            <h1 style={{ margin: '0.25rem 0 0' }}>{v.make} {v.model}</h1>
             <div className="text-muted">
-              {v.year} &middot; {v.color} &middot; {v.car_type}
+              {v.year} &middot; {v.color}
             </div>
 
             <div className="mt-2" style={{
@@ -148,14 +165,14 @@ export default function VehiculoDetallePage() {
               <Feature label="Pasajeros" value={String(v.seats)} />
               <Feature label="Puertas" value={String(v.doors)} />
               <Feature label="Maletas" value={String(v.bag_capacity)} />
-              <Feature label="Transmision" value={v.transmission} />
+              <Feature label="Transmisión" value={v.transmission} />
               <Feature label="Combustible" value={v.fuel_type} />
               <Feature label="AC" value={v.air_conditioning ? 'Si' : 'No'} />
             </div>
 
             {v.description && (
               <div className="mt-3">
-                <h3>Descripcion</h3>
+                <h3>Descripción</h3>
                 <p className="text-muted" style={{ lineHeight: 1.6 }}>{v.description}</p>
               </div>
             )}
@@ -178,15 +195,15 @@ export default function VehiculoDetallePage() {
 
         {/* Reserva */}
         <aside>
-          <div className="card" style={{ position: 'sticky', top: '80px' }}>
+          <div className="card" style={{ position: 'sticky', top: '84px', borderTop: '3px solid var(--brand)' }}>
             <div className="card-body">
               {step === 'form' && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.35rem' }}>
-                    <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--brand)' }}>
+                    <span className="price" style={{ fontSize: '1.9rem' }}>
                       ${Number(v.price_per_day).toFixed(2)}
                     </span>
-                    <span className="text-muted">/ dia</span>
+                    <span className="text-muted">/ día</span>
                   </div>
 
                   {error && <div className="alert alert-danger mt-2">{error}</div>}
@@ -200,11 +217,6 @@ export default function VehiculoDetallePage() {
                     <label className="form-label">Fecha fin</label>
                     <input type="date" className="form-control" min={ini}
                       value={fin} onChange={(e) => { setFin(e.target.value); setSearchToken(''); }} />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Edad del conductor</label>
-                    <input type="number" className="form-control" min={18} max={99}
-                      value={edad} onChange={(e) => { setEdad(Number(e.target.value)); setSearchToken(''); }} />
                   </div>
 
                   <div className="form-group">
@@ -221,23 +233,17 @@ export default function VehiculoDetallePage() {
                   </div>
 
                   {dias > 0 && (
-                    <div style={{
-                      background: 'var(--brand-light)', padding: '0.75rem',
-                      borderRadius: 'var(--radius-sm)', marginBottom: '1rem',
-                    }}>
-                      <div className="flex-between"><span>Dias</span><span>{dias}</span></div>
-                      <div className="flex-between"><span>Vehiculo</span><span>${(dias * Number(v.price_per_day)).toFixed(2)}</span></div>
+                    <div className="summary">
+                      <div className="flex-between"><span>Días</span><span>{dias}</span></div>
+                      <div className="flex-between"><span>Vehículo</span><span>${(dias * Number(v.price_per_day)).toFixed(2)}</span></div>
                       {extras.length > 0 && (
                         <div className="flex-between"><span>Extras ({extras.length})</span><span>${(extras.length * 5 * dias).toFixed(2)}</span></div>
                       )}
-                      <div className="flex-between" style={{
-                        fontWeight: 700, borderTop: '1px solid #bfdbfe',
-                        paddingTop: '0.4rem', marginTop: '0.4rem',
-                      }}>
+                      <div className="flex-between summary-total">
                         <span>Subtotal</span><span>${precioEstimado.toFixed(2)}</span>
                       </div>
                       <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                        (impuestos calculados en el paso de previsualizacion)
+                        (impuestos calculados en el siguiente paso)
                       </div>
                     </div>
                   )}
@@ -257,19 +263,13 @@ export default function VehiculoDetallePage() {
 
                   {error && <div className="alert alert-danger">{error}</div>}
 
-                  <div style={{
-                    background: 'var(--brand-light)', padding: '0.75rem',
-                    borderRadius: 'var(--radius-sm)', marginBottom: '1rem',
-                  }}>
+                  <div className="summary">
                     {Object.entries(preview.data.breakdown).map(([k, val]) => (
                       <div key={k} className="flex-between">
-                        <span>{k}</span><span>{typeof val === 'number' ? `$${Number(val).toFixed(2)}` : String(val)}</span>
+                        <span>{ETIQUETAS_DESGLOSE[k] || k}</span><span>{k === 'days' ? String(val) : typeof val === 'number' ? `$${Number(val).toFixed(2)}` : String(val)}</span>
                       </div>
                     ))}
-                    <div className="flex-between" style={{
-                      fontWeight: 700, borderTop: '1px solid #bfdbfe',
-                      paddingTop: '0.4rem', marginTop: '0.4rem',
-                    }}>
+                    <div className="flex-between summary-total">
                       <span>Total</span><span>${preview.data.total_price.toFixed(2)} {preview.data.currency}</span>
                     </div>
                   </div>
@@ -290,7 +290,7 @@ export default function VehiculoDetallePage() {
                       onChange={(e) => setDriver({ ...driver, email: e.target.value })} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Telefono</label>
+                    <label className="form-label">Teléfono</label>
                     <input className="form-control" value={driver.phone_number}
                       onChange={(e) => setDriver({ ...driver, phone_number: e.target.value })} />
                   </div>
@@ -326,10 +326,10 @@ export default function VehiculoDetallePage() {
 function Feature({ label, value }: { label: string; value: string }) {
   return (
     <div style={{
-      background: '#f8fafc', border: '1px solid var(--border)',
+      background: '#fff', border: '1px solid var(--border)',
       borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.85rem',
     }}>
-      <div className="text-muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>{label}</div>
+      <div className="text-muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
       <div style={{ fontWeight: 600, fontSize: '0.95rem', textTransform: 'capitalize' }}>{value}</div>
     </div>
   );
