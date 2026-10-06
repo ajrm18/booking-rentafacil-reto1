@@ -155,7 +155,7 @@ export default function HomePage() {
           color: #fff; padding: 4.5rem 0 3.5rem;
         }
         .search-bar {
-          background: #fff; color: var(--text); border-radius: var(--radius);
+          background: var(--surface); color: var(--text); border-radius: var(--radius);
           padding: 1rem; margin-top: 2.25rem; display: grid; gap: 0.75rem;
           grid-template-columns: 1.3fr 1fr 1fr auto;
           box-shadow: 0 20px 50px rgba(0,0,0,0.35);
@@ -178,15 +178,15 @@ export default function HomePage() {
         }
         .cat-card {
           display: flex; flex-direction: column; gap: 0.2rem;
-          background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+          background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
           padding: 1.25rem 1.25rem 1rem; color: var(--text);
           transition: border-color .18s, box-shadow .18s, transform .18s;
         }
         .cat-card:hover {
-          text-decoration: none; border-color: var(--ink);
+          text-decoration: none; border-color: var(--strong);
           box-shadow: var(--shadow-lg); transform: translateY(-2px);
         }
-        .cat-icon { color: var(--ink); height: 46px; display: flex; align-items: center; margin-bottom: 0.6rem; }
+        .cat-icon { color: var(--strong); height: 46px; display: flex; align-items: center; margin-bottom: 0.6rem; }
         .cat-card:hover .cat-icon { color: var(--brand-dark); }
         .cat-label { font-weight: 700; font-size: 1.05rem; }
         .cat-desc { color: var(--text-muted); font-size: 0.85rem; }
@@ -196,7 +196,7 @@ export default function HomePage() {
           display: flex; justify-content: space-between; align-items: center;
         }
         .cat-price b { color: var(--text); }
-        .cat-arrow { color: var(--ink); font-weight: 700; transition: transform .18s; }
+        .cat-arrow { color: var(--strong); font-weight: 700; transition: transform .18s; }
         .cat-card:hover .cat-arrow { transform: translateX(3px); color: var(--brand-dark); }
       `}</style>
     </>

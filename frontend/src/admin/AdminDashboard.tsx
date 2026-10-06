@@ -10,12 +10,12 @@ export default function AdminDashboard() {
   useEffect(() => { admin.stats().then(setStats).catch(() => {}); }, []);
 
   const cards = [
-    { label: 'Vehiculos', value: stats.total_vehicles, color: '#0b0d10' },
-    { label: 'Agencias', value: stats.total_depots, color: '#0b0d10' },
-    { label: 'Proveedores', value: stats.total_suppliers, color: '#0b0d10' },
-    { label: 'Ordenes', value: stats.total_orders, color: '#0b0d10' },
-    { label: 'Confirmadas', value: stats.confirmed_orders, color: '#0b0d10' },
-    { label: 'Ingresos', value: `$${stats.total_revenue.toFixed(2)}`, color: '#8a5a00' },
+    { label: 'Vehiculos', value: stats.total_vehicles, color: 'var(--strong)' },
+    { label: 'Agencias', value: stats.total_depots, color: 'var(--strong)' },
+    { label: 'Proveedores', value: stats.total_suppliers, color: 'var(--strong)' },
+    { label: 'Ordenes', value: stats.total_orders, color: 'var(--strong)' },
+    { label: 'Confirmadas', value: stats.confirmed_orders, color: 'var(--strong)' },
+    { label: 'Ingresos', value: `$${stats.total_revenue.toFixed(2)}`, color: 'var(--brand-ink)' },
   ];
 
   return (

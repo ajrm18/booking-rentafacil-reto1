@@ -9,6 +9,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <meta name="description" content="RentaFacil EC - Alquila el vehiculo perfecto para tu proximo viaje" />
+    <script>
+      // Aplica el tema guardado (o el del sistema) antes de pintar, para evitar parpadeo
+      (function () {
+        var t = null;
+        try { t = localStorage.getItem('rf_theme'); } catch (e) {}
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
     <title>RentaFacil EC - Alquiler de Vehiculos</title>
   </head>
   <body>

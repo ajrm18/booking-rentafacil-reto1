@@ -123,7 +123,7 @@ export default function VehiculoDetallePage() {
       <div style={{ display: 'grid', gap: '1.5rem', gridTemplateColumns: 'minmax(280px, 1.4fr) minmax(260px, 1fr)' }} className="detalle-grid">
         {/* Galeria + Info */}
         <div>
-          <div style={{ aspectRatio: '16 / 10', borderRadius: 'var(--radius)', overflow: 'hidden', background: '#e9e9e6' }}>
+          <div style={{ aspectRatio: '16 / 10', borderRadius: 'var(--radius)', overflow: 'hidden', background: 'var(--media-bg)' }}>
             <img src={imagenes[imgActiva]} alt={`${v.make} ${v.model}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           </div>
           {PHOTO_CREDITS[imagenes[imgActiva]] && (
@@ -142,7 +142,7 @@ export default function VehiculoDetallePage() {
               {imagenes.map((img, i) => (
                 <button key={i} onClick={() => setImgActiva(i)} style={{
                   aspectRatio: '4 / 3', borderRadius: 8, overflow: 'hidden',
-                  border: imgActiva === i ? '2px solid var(--ink)' : '1px solid var(--border)', opacity: imgActiva === i ? 1 : 0.75,
+                  border: imgActiva === i ? '2px solid var(--strong)' : '1px solid var(--border)', opacity: imgActiva === i ? 1 : 0.75,
                   padding: 0, cursor: 'pointer',
                 }}>
                   <img src={img} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -326,7 +326,7 @@ export default function VehiculoDetallePage() {
 function Feature({ label, value }: { label: string; value: string }) {
   return (
     <div style={{
-      background: '#fff', border: '1px solid var(--border)',
+      background: 'var(--surface)', border: '1px solid var(--border)',
       borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.85rem',
     }}>
       <div className="text-muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>

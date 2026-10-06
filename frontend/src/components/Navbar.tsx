@@ -1,11 +1,13 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../hooks/useTheme';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
+  const { theme, toggle } = useTheme();
 
   const doLogout = () => { logout(); setOpen(false); nav('/'); };
 
@@ -32,6 +34,7 @@ export default function Navbar() {
         </Link>
 
         <nav className="nav-desktop" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <ThemeToggle theme={theme} onToggle={toggle} />
           <NavLink to="/" end className="nav-link">Inicio</NavLink>
           <NavLink to="/catalogo" className="nav-link">Catálogo</NavLink>
           {user && <NavLink to="/mis-reservas" className="nav-link">Mis reservas</NavLink>}
@@ -46,13 +49,16 @@ export default function Navbar() {
           )}
         </nav>
 
-        <button className="nav-toggle" onClick={() => setOpen(!open)} aria-label="Menu"
-          style={{ display: 'none', padding: '12px 8px', borderRadius: 8, border: '1px solid var(--ink-3)', background: 'transparent' }}>
+        <div className="nav-toggle" style={{ display: 'none', alignItems: 'center', gap: '0.5rem' }}>
+          <ThemeToggle theme={theme} onToggle={toggle} />
+        <button onClick={() => setOpen(!open)} aria-label="Menu"
+          style={{ display: 'inline-flex', padding: '12px 8px', borderRadius: 8, border: '1px solid var(--ink-3)', background: 'transparent' }}>
           <span style={{
             display: 'block', width: 22, height: 2, background: '#fff',
             boxShadow: '0 -6px 0 #fff, 0 6px 0 #fff',
           }} />
         </button>
+        </div>
       </div>
 
       {open && (
@@ -83,6 +89,12 @@ export default function Navbar() {
         .nav-link-mobile { padding: 0.75rem 0.25rem; margin: 0; border-bottom: 1px solid var(--ink-3); }
         .nav-btn-outline { border: 1px solid var(--ink-3); color: #fff; }
         .nav-btn-outline:hover { border-color: #fff; text-decoration: none; }
+        .theme-toggle {
+          width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--ink-3);
+          display: inline-flex; align-items: center; justify-content: center; color: #c9cbcf;
+          transition: color .15s, border-color .15s;
+        }
+        .theme-toggle:hover { color: var(--brand); border-color: #454c57; }
         @media (max-width: 900px) {
           .nav-desktop { display: none !important; }
           .nav-toggle { display: inline-flex !important; }
@@ -92,5 +104,24 @@ export default function Navbar() {
         }
       `}</style>
     </header>
+  );
+}
+
+function ThemeToggle({ theme, onToggle }: { theme: 'light' | 'dark'; onToggle: () => void }) {
+  const oscuro = theme === 'dark';
+  const label = oscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
+  return (
+    <button type="button" className="theme-toggle" onClick={onToggle} aria-label={label} title={label}>
+      {oscuro ? (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+      ) : (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+      )}
+    </button>
   );
 }

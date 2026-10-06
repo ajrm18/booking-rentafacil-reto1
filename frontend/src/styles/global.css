@@ -1,5 +1,11 @@
+/*
+ * Tokens de diseno. Modo claro por defecto; el modo oscuro se activa con
+ * <html data-theme="dark"> (lo fija el script inline de index.html y el boton del navbar).
+ * --ink: superficies SIEMPRE oscuras (navbar, footer, hero).
+ * --strong: primer plano de maximo contraste (negro en claro, casi blanco en oscuro).
+ */
 :root {
-  /* Paleta: negro carbon + acento ambar */
+  color-scheme: light;
   --ink: #0b0d10;
   --ink-2: #15181d;
   --ink-3: #23272e;
@@ -7,15 +13,27 @@
   --brand-dark: #d18f00;
   --brand-light: #fff4d6;
   --brand-ink: #8a5a00;
+  --brand-border: #f5d68a;
   --on-brand: #0b0d10;
   --bg: #f4f4f2;
   --surface: #ffffff;
+  --surface-2: #f7f7f5;
+  --surface-hover: #ececea;
+  --media-bg: #e9e9e6;
   --border: #e4e4e0;
+  --border-strong: #cfcfca;
   --text: #0b0d10;
   --text-muted: #5f6368;
+  --strong: #0b0d10;
+  --on-strong: #ffffff;
   --success: #16a34a;
-  --warning: #f59e0b;
+  --success-bg: #dcfce7;
+  --success-border: #bbf7d0;
+  --warning: #b45309;
+  --warning-bg: #fef3c7;
   --danger: #dc2626;
+  --danger-bg: #fee2e2;
+  --danger-border: #fecaca;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
   --shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12);
@@ -23,6 +41,35 @@
   --radius-sm: 8px;
   --radius-lg: 20px;
   --content-max: 1200px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --brand-light: rgba(240, 165, 0, 0.12);
+  --brand-ink: #f5b729;
+  --brand-border: rgba(240, 165, 0, 0.35);
+  --bg: #0e1013;
+  --surface: #16191e;
+  --surface-2: #1c2026;
+  --surface-hover: #242930;
+  --media-bg: #1c2026;
+  --border: #2a2f37;
+  --border-strong: #454c57;
+  --text: #ecedef;
+  --text-muted: #9a9fa8;
+  --strong: #f4f4f2;
+  --on-strong: #0b0d10;
+  --success: #4ade80;
+  --success-bg: rgba(22, 163, 74, 0.15);
+  --success-border: rgba(74, 222, 128, 0.3);
+  --warning: #fbbf24;
+  --warning-bg: rgba(245, 158, 11, 0.15);
+  --danger: #f87171;
+  --danger-bg: rgba(220, 38, 38, 0.15);
+  --danger-border: rgba(248, 113, 113, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
 * { box-sizing: border-box; }
@@ -35,6 +82,7 @@ html, body {
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 a { color: var(--brand-ink); text-decoration: none; }
@@ -73,15 +121,15 @@ img { max-width: 100%; display: block; }
 }
 .btn-primary { background: var(--brand); color: var(--on-brand); }
 .btn-primary:hover { background: var(--brand-dark); text-decoration: none; }
-.btn-dark { background: var(--ink); color: #fff; }
-.btn-dark:hover { background: var(--ink-3); text-decoration: none; }
-.btn-outline { border-color: var(--border); background: #fff; color: var(--text); }
-.btn-outline:hover { border-color: var(--ink); color: var(--ink); text-decoration: none; }
+.btn-dark { background: var(--strong); color: var(--on-strong); }
+.btn-dark:hover { opacity: 0.88; text-decoration: none; }
+.btn-outline { border-color: var(--border); background: var(--surface); color: var(--text); }
+.btn-outline:hover { border-color: var(--strong); color: var(--strong); text-decoration: none; }
 .btn-ghost { color: var(--text); }
-.btn-ghost:hover { background: #ececea; color: var(--ink); }
-.btn-danger { background: var(--danger); color: #fff; }
+.btn-ghost:hover { background: var(--surface-hover); color: var(--strong); }
+.btn-danger { background: #dc2626; color: #fff; }
 .btn-danger:hover { opacity: 0.9; }
-.btn-success { background: var(--success); color: #fff; }
+.btn-success { background: #16a34a; color: #fff; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-sm { padding: 0.4rem 0.75rem; font-size: 0.85rem; }
 .btn-block { width: 100%; }
@@ -111,13 +159,13 @@ img { max-width: 100%; display: block; }
   border-radius: var(--radius-sm);
   font-size: 0.95rem;
   font-family: inherit;
-  background: #fff;
+  background: var(--surface);
   color: var(--text);
   transition: border-color 0.15s;
 }
 .form-control:focus {
   outline: none;
-  border-color: var(--ink);
+  border-color: var(--strong);
   box-shadow: 0 0 0 3px rgba(240, 165, 0, 0.25);
 }
 textarea.form-control { min-height: 90px; resize: vertical; }
@@ -140,17 +188,17 @@ select.form-control { appearance: none; background-image: url("data:image/svg+xm
   background: var(--brand-light);
   color: var(--brand-ink);
 }
-.badge-success { background: #dcfce7; color: var(--success); }
-.badge-warning { background: #fef3c7; color: var(--warning); }
-.badge-danger { background: #fee2e2; color: var(--danger); }
-.badge-muted { background: #f1f5f9; color: var(--text-muted); }
+.badge-success { background: var(--success-bg); color: var(--success); }
+.badge-warning { background: var(--warning-bg); color: var(--warning); }
+.badge-danger { background: var(--danger-bg); color: var(--danger); }
+.badge-muted { background: var(--surface-2); color: var(--text-muted); }
 
 /* Table */
 .table-wrapper {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--surface);
 }
 .table {
   width: 100%;
@@ -164,7 +212,7 @@ select.form-control { appearance: none; background-image: url("data:image/svg+xm
   border-bottom: 1px solid var(--border);
 }
 .table th {
-  background: #f8fafc;
+  background: var(--surface-2);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -172,7 +220,7 @@ select.form-control { appearance: none; background-image: url("data:image/svg+xm
   letter-spacing: 0.05em;
 }
 .table tr:last-child td { border-bottom: none; }
-.table tr:hover td { background: #f8fafc; }
+.table tr:hover td { background: var(--surface-2); }
 
 /* Alert */
 .alert {
@@ -181,9 +229,9 @@ select.form-control { appearance: none; background-image: url("data:image/svg+xm
   font-size: 0.9rem;
   margin-bottom: 1rem;
 }
-.alert-danger { background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
-.alert-success { background: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
-.alert-info { background: var(--brand-light); color: var(--brand-ink); border: 1px solid #f5d68a; }
+.alert-danger { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+.alert-success { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+.alert-info { background: var(--brand-light); color: var(--brand-ink); border: 1px solid var(--brand-border); }
 
 /* Eyebrow / etiquetas de seccion */
 .eyebrow {
@@ -197,16 +245,23 @@ select.form-control { appearance: none; background-image: url("data:image/svg+xm
 
 /* Tarjeta de vehiculo */
 .veh-card { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
-.veh-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: #cfcfca; }
+.veh-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
 .veh-card img { transition: transform 0.4s ease; }
 .veh-card:hover img { transform: scale(1.03); }
 
 /* Resumen de precios */
 .summary {
-  background: #f7f7f5; border: 1px solid var(--border);
+  background: var(--surface-2); border: 1px solid var(--border);
   padding: 0.85rem; border-radius: var(--radius-sm); margin-bottom: 1rem;
 }
 .summary-total { font-weight: 700; border-top: 1px solid var(--border); padding-top: 0.5rem; margin-top: 0.5rem; }
+
+/* Chip de especificacion */
+.spec {
+  font-size: 0.75rem; color: var(--text-muted); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.5rem;
+  text-transform: capitalize;
+}
 
 /* Utilidades */
 .text-muted { color: var(--text-muted); }

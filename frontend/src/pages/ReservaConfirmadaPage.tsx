@@ -27,7 +27,7 @@ export default function ReservaConfirmadaPage() {
         <div className="card-body">
           <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
             <div style={{
-              width: 72, height: 72, borderRadius: '50%', background: '#dcfce7',
+              width: 72, height: 72, borderRadius: '50%', background: 'var(--success-bg)',
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: '2rem', color: 'var(--success)', marginBottom: '0.5rem',
             }}>✓</div>
@@ -36,7 +36,7 @@ export default function ReservaConfirmadaPage() {
           </div>
 
           <div style={{
-            background: '#f8fafc', border: '1px solid var(--border)',
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
             padding: '1rem', borderRadius: 'var(--radius)', marginBottom: '1rem',
           }}>
             <div className="flex-between"><span>Localizador (PNR)</span><code style={{ fontSize: '1rem' }}>{orden.locator}</code></div>

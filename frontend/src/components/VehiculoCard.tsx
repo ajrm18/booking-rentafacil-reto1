@@ -20,7 +20,7 @@ export default function VehiculoCard({ vehiculo, precioTotal, dias, extraQuery }
       <div className="card veh-card" style={{
         overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%', cursor: 'pointer',
       }}>
-        <div style={{ aspectRatio: '16 / 10', overflow: 'hidden', background: '#e9e9e6', position: 'relative' }}>
+        <div style={{ aspectRatio: '16 / 10', overflow: 'hidden', background: 'var(--media-bg)', position: 'relative' }}>
           {vehiculo.main_image_url && (
             <img src={vehiculo.main_image_url} alt={`${vehiculo.make} ${vehiculo.model}`}
               style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" />
@@ -70,10 +70,6 @@ export default function VehiculoCard({ vehiculo, precioTotal, dias, extraQuery }
 
 function Spec({ children }: { children: React.ReactNode }) {
   return (
-    <span style={{
-      fontSize: '0.75rem', color: 'var(--text-muted)', background: '#f2f2ef',
-      border: '1px solid var(--border)', borderRadius: 6, padding: '0.2rem 0.5rem',
-      textTransform: 'capitalize',
-    }}>{children}</span>
+    <span className="spec">{children}</span>
   );
 }
