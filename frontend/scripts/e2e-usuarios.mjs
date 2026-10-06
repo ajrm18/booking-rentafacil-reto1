@@ -99,7 +99,10 @@ try {
   await modal.getByLabel('Teléfono').fill('+593 99 765 4321');
   await modal.getByRole('button', { name: 'Guardar cambios' }).click();
   await modal.waitFor({ state: 'detached' });
-  check('editar usuario (teléfono)', (await page.locator('tr', { hasText: PEDRO.email }).textContent()).includes('+593 99 765 4321'));
+  // La tabla se recarga tras guardar: esperar a que la fila refleje el cambio (en Render tarda más)
+  const editado = await page.locator('tr', { hasText: PEDRO.email }).filter({ hasText: '+593 99 765 4321' })
+    .waitFor({ timeout: 20_000 }).then(() => true, () => false);
+  check('editar usuario (teléfono)', editado);
   await logout();
 
   console.log('\n# Pedro inicia sesión y reserva');
