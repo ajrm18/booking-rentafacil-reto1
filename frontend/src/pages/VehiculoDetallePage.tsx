@@ -137,7 +137,7 @@ export default function VehiculoDetallePage() {
           {imagenes.length > 1 && (
             <div style={{
               display: 'grid', gap: '0.5rem', marginTop: '0.5rem',
-              gridTemplateColumns: `repeat(${Math.min(imagenes.length, 5)}, 1fr)`,
+              gridTemplateColumns: 'repeat(5, 1fr)',
             }}>
               {imagenes.map((img, i) => (
                 <button key={i} onClick={() => setImgActiva(i)} style={{
@@ -165,9 +165,9 @@ export default function VehiculoDetallePage() {
               <Feature label="Pasajeros" value={String(v.seats)} />
               <Feature label="Puertas" value={String(v.doors)} />
               <Feature label="Maletas" value={String(v.bag_capacity)} />
-              <Feature label="Transmisión" value={v.transmission} />
-              <Feature label="Combustible" value={v.fuel_type} />
-              <Feature label="AC" value={v.air_conditioning ? 'Si' : 'No'} />
+              <Feature label="Transmisión" value={v.transmission === 'automatica' ? 'Automática' : v.transmission} />
+              <Feature label="Combustible" value={v.fuel_type === 'hibrido' ? 'Híbrido' : v.fuel_type === 'diesel' ? 'Diésel' : v.fuel_type} />
+              <Feature label="AC" value={v.air_conditioning ? 'Sí' : 'No'} />
             </div>
 
             {v.description && (
