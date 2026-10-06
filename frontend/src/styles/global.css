@@ -98,6 +98,37 @@ button {
 
 img { max-width: 100%; display: block; }
 
+/*
+ * Navegacion por teclado: anillo de foco visible (ambar) solo al usar Tab, no al hacer clic.
+ * Doble anillo (ambar + fondo) para que se vea igual sobre superficies claras y sobre el navbar negro.
+ */
+:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) { outline: none; }
+.form-control:focus-visible { outline: none; } /* ya tiene su propio estilo de foco (borde + halo) */
+input[type="checkbox"]:focus-visible { outline-offset: 1px; }
+
+/* Tarjeta de vehiculo enfocada con Tab (el foco esta en el enlace que la envuelve) */
+.veh-card-link { display: block; border-radius: var(--radius); }
+.veh-card-link:focus-visible { outline-offset: 3px; }
+.veh-card-link:focus-visible .veh-card { box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
+
+/* Enlace "Saltar al contenido": primer elemento que alcanza Tab; oculto hasta recibir foco */
+.skip-link {
+  position: absolute; left: 1rem; top: 0; z-index: 100;
+  transform: translateY(-120%);
+  background: var(--brand); color: var(--on-brand);
+  padding: 0.6rem 1rem; border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  font-weight: 700; text-decoration: none;
+  transition: transform 0.15s ease;
+}
+.skip-link:focus { transform: translateY(0); text-decoration: none; }
+
+main:focus { outline: none; }
+
 .container {
   max-width: var(--content-max);
   margin: 0 auto;
@@ -163,10 +194,16 @@ img { max-width: 100%; display: block; }
   color: var(--text);
   transition: border-color 0.15s;
 }
-.form-control:focus {
+/* :focus-within cubre el icono de calendario de input[type=date], que recibe el foco por separado */
+.form-control:focus, .form-control:focus-within {
   outline: none;
   border-color: var(--strong);
-  box-shadow: 0 0 0 3px rgba(240, 165, 0, 0.25);
+  box-shadow: 0 0 0 3px rgba(240, 165, 0, 0.45);
+}
+.form-control::-webkit-calendar-picker-indicator:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 textarea.form-control { min-height: 90px; resize: vertical; }
 select.form-control { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><path fill='%2364748b' d='M5 8l5 5 5-5z'/></svg>"); background-repeat: no-repeat; background-position: right 0.5rem center; padding-right: 2rem; }

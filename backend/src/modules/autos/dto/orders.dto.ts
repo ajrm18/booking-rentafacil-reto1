@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  IsArray, IsEmail, IsOptional, IsString, ValidateNested,
+  ArrayNotEmpty, IsArray, IsEmail, IsIn, IsOptional, IsString, IsUrl, IsUUID, ValidateNested,
 } from 'class-validator';
 import { DriverDto, RouteDto } from './common-schemas.dto';
 
@@ -157,14 +157,16 @@ export class OrderModifyRequestDto {
   route?: RouteDto;
 }
 
-/** Webhook */
+/** Webhook: eventos permitidos por WebhookSubscription.events */
+export const WEBHOOK_EVENTS = ['CAR_ORDER_CONFIRMED', 'CAR_ORDER_CANCELLED', 'DEPOT_UPDATE'];
+
 export class WebhookSubscriptionDto {
   @ApiPropertyOptional({ example: '123e4567-e89b-12d3-a456-426614174000', format: 'uuid' })
-  @IsOptional() @IsString()
+  @IsOptional() @IsUUID()
   id?: string;
 
   @ApiProperty({ example: 'https://mi-sistema.example.com/webhooks/autos', format: 'uri' })
-  @IsString()
+  @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] })
   url: string;
 
   @ApiProperty({
@@ -172,7 +174,7 @@ export class WebhookSubscriptionDto {
     enum: ['CAR_ORDER_CONFIRMED', 'CAR_ORDER_CANCELLED', 'DEPOT_UPDATE'],
     example: ['CAR_ORDER_CONFIRMED'],
   })
-  @IsArray() @IsString({ each: true })
+  @IsArray() @ArrayNotEmpty() @IsIn(WEBHOOK_EVENTS, { each: true })
   events: string[];
 
   @ApiPropertyOptional({ example: 'secret-para-firma-hmac' })

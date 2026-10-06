@@ -5,6 +5,9 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 
+/** Identidad extraida del JWT y adjuntada a request.auth por OAuth2Guard. */
+export interface AuthContext { sub: string; scopes: string[] }
+
 export const SCOPES_KEY = 'oauth2Scopes';
 export const RequireScopes = (...scopes: string[]) => SetMetadata(SCOPES_KEY, scopes);
 
@@ -79,7 +82,7 @@ export class OAuth2Guard implements CanActivate {
       }
     }
 
-    (request as any).auth = { sub: payload.sub, scopes: tokenScopes };
+    (request as any).auth = { sub: payload.sub, scopes: tokenScopes } satisfies AuthContext;
     return true;
   }
 }

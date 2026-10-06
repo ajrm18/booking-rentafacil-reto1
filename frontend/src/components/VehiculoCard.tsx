@@ -16,7 +16,7 @@ export default function VehiculoCard({ vehiculo, precioTotal, dias, extraQuery }
   const url = `/vehiculos/${vehiculo.vehicle_id}${extraQuery ? `?${extraQuery}` : ''}`;
 
   return (
-    <Link to={url} style={{ textDecoration: 'none', color: 'inherit' }}>
+    <Link to={url} className="veh-card-link" style={{ textDecoration: 'none', color: 'inherit', height: '100%' }}>
       <div className="card veh-card" style={{
         overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%', cursor: 'pointer',
       }}>

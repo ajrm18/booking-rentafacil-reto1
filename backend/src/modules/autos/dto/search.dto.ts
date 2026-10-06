@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  IsArray, IsInt, IsOptional, IsString, Matches, Max, Min, ValidateNested,
+  IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min, ValidateNested,
 } from 'class-validator';
 import { BookerDto, DriverDto, RouteDto } from './common-schemas.dto';
 
@@ -86,12 +86,12 @@ export class CarSearchResponseDto {
 
 /** DepotsRequest / DepotsResponse */
 export class DepotsRequestDto {
-  @ApiPropertyOptional({ example: '2026-01-01T00:00:00Z' })
-  @IsOptional() @IsString()
+  @ApiPropertyOptional({ example: '2026-01-01T00:00:00Z', format: 'date-time' })
+  @IsOptional() @IsDateString()
   last_modified?: string;
 
-  @ApiPropertyOptional({ example: 100 })
-  @IsOptional() @IsInt()
+  @ApiPropertyOptional({ example: 100, default: 100, minimum: 1, maximum: 500 })
+  @IsOptional() @IsInt() @Min(1) @Max(500)
   maximum_results?: number;
 
   @ApiPropertyOptional({ type: [String], example: ['es', 'en'] })
@@ -104,8 +104,8 @@ export class DepotsRequestDto {
 }
 
 export class DepotScoresRequestDto {
-  @ApiPropertyOptional({ example: 100 })
-  @IsOptional() @IsInt()
+  @ApiPropertyOptional({ example: 100, default: 100, minimum: 1, maximum: 500 })
+  @IsOptional() @IsInt() @Min(1) @Max(500)
   maximum_results?: number;
 
   @ApiPropertyOptional({ example: '1' })
@@ -115,12 +115,12 @@ export class DepotScoresRequestDto {
 
 /** CarDetailsRequest */
 export class CarDetailsRequestDto {
-  @ApiPropertyOptional({ example: '2026-01-01T00:00:00Z' })
-  @IsOptional() @IsString()
+  @ApiPropertyOptional({ example: '2026-01-01T00:00:00Z', format: 'date-time' })
+  @IsOptional() @IsDateString()
   last_modified?: string;
 
-  @ApiPropertyOptional({ example: 100 })
-  @IsOptional() @IsInt()
+  @ApiPropertyOptional({ example: 100, default: 100, minimum: 1, maximum: 500 })
+  @IsOptional() @IsInt() @Min(1) @Max(500)
   maximum_results?: number;
 
   @ApiPropertyOptional({ example: '1' })
@@ -138,8 +138,8 @@ export class SuppliersRequestDto {
   @IsOptional() @IsArray() @IsInt({ each: true })
   suppliers?: number[];
 
-  @ApiPropertyOptional({ example: 100 })
-  @IsOptional() @IsInt()
+  @ApiPropertyOptional({ example: 100, default: 100, minimum: 1, maximum: 500 })
+  @IsOptional() @IsInt() @Min(1) @Max(500)
   maximum_results?: number;
 
   @ApiPropertyOptional({ example: '1' })
@@ -148,6 +148,8 @@ export class SuppliersRequestDto {
 }
 
 /** CarConstantsRequest */
+const CONSTANT_KEYS = ['depot_services', 'fuel_policies', 'fuel_types', 'general', 'payment_timings', 'transmission'];
+
 export class CarConstantsRequestDto {
   @ApiPropertyOptional({ type: [String], example: ['es'] })
   @IsOptional() @IsArray() @IsString({ each: true })
@@ -157,6 +159,6 @@ export class CarConstantsRequestDto {
     type: [String],
     enum: ['depot_services', 'fuel_policies', 'fuel_types', 'general', 'payment_timings', 'transmission'],
   })
-  @IsOptional() @IsArray() @IsString({ each: true })
+  @IsOptional() @IsArray() @IsIn(CONSTANT_KEYS, { each: true })
   constants?: string[];
 }

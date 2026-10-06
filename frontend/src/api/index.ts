@@ -73,3 +73,24 @@ export const admin = {
   deleteSupplier: (id: number) => api.delete(`/admin/suppliers/${id}`),
   listOrders: (status?: string) => api.get<OrderDetail[]>('/admin/orders', { params: { status } }).then((r) => r.data),
 };
+
+/** Cliente CRUD generico para las APIs de administracion (una por tabla). */
+const adminCrud = <T = any, Id extends string | number = string>(recurso: string) => ({
+  list: (params?: Record<string, any>) => api.get<T[]>(`/admin/${recurso}`, { params }).then((r) => r.data),
+  get: (id: Id) => api.get<T>(`/admin/${recurso}/${id}`).then((r) => r.data),
+  create: (data: Partial<T>) => api.post<T>(`/admin/${recurso}`, data).then((r) => r.data),
+  update: (id: Id, data: Partial<T>) => api.put<T>(`/admin/${recurso}/${id}`, data).then((r) => r.data),
+  remove: (id: Id) => api.delete(`/admin/${recurso}/${id}`),
+});
+
+/** Una API por cada tabla de la base de datos (8 tablas). */
+export const adminApis = {
+  suppliers: adminCrud<Supplier, number>('suppliers'),
+  depots: adminCrud<Depot, number>('depots'),
+  vehicles: adminCrud('vehicles'),
+  vehicleImages: adminCrud<any, number>('vehicle-images'),
+  holds: adminCrud('holds'),
+  orderPreviews: adminCrud('order-previews'),
+  orders: adminCrud<OrderDetail>('orders'),
+  webhooks: adminCrud('webhooks'),
+};

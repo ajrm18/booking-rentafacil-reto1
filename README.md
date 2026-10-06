@@ -31,9 +31,38 @@ El backend implementa **todos** los endpoints del contrato oficial, con exactame
 
 Todos bajo prefijo `/api/v1` (equivalente al `servers.url` = `https://.../autos/v1` del contrato).
 
+**Detalles del contrato que se cumplen** (verificados con una prueba E2E de 127 comprobaciones):
+- Cabeceras `Cache-Control` (valor exacto por endpoint) y `X-API-Deprecation-Date` en las 6 respuestas publicas.
+- `429` con `code: RATE_LIMIT_EXCEEDED` y `Retry-After` al exceder el limite por afiliado (`RATE_LIMIT_PER_MINUTE`, 120 por defecto); `409` tambien envia `Retry-After`.
+- Errores `application/problem+json` con solo los campos de `ProblemDetails` (`additionalProperties: false`) y `invalidParams` con rutas anidadas (ej. `driver.age`).
+- Paginacion `maximum_results` / `page` con `metadata.next_page`; `last_modified` filtra `/details`.
+- El `search_token` transporta la ruta de la busqueda: `/orders/preview` cobra los dias reales y la orden guarda `route_details`.
+- El dueño de la orden es el `sub` del JWT: solo el dueño (o un admin) puede ver, modificar o cancelar su orden.
+- `Idempotency-Key` en create/modify/cancel: un reintento con la misma clave devuelve el mismo resultado.
+- `modify` recalcula `total_price` al cambiar extras o ruta.
+- Webhooks: `url` (uri) y `events` (enum) validados; se entrega el `WebhookPayload` del callback `carEvent`
+  (`CAR_ORDER_CONFIRMED`, `CAR_ORDER_CANCELLED`, `DEPOT_UPDATE`) firmado con HMAC-SHA256 en `X-Webhook-Signature` si hay `secret`.
+- Swagger declara `OAuth2Security` con los flujos `authorizationCode` y `clientCredentials` y `security: []` en los endpoints publicos.
+
 **Extra (fuera del contrato publico) para cumplir el Reto 1:**
 - `POST /api/v1/auth/token` — Authorization Server local (equivalente al OAuth2 de `auth.booking-hub.com`).
-- `GET|POST|PUT|DELETE /api/v1/admin/*` — BFF del panel administrativo interno.
+- **8 APIs de administracion, una por cada tabla** (OAuth2 scope `autos:webhooks`). Cada una expone
+  `GET /` (listar), `GET /:id`, `POST /`, `PUT /:id` y `DELETE /:id` bajo `/api/v1/admin/<recurso>`:
+
+| Tabla | API | Filtros en `GET` |
+|---|---|---|
+| `suppliers` | `/admin/suppliers` | — |
+| `depots` | `/admin/depots` | — |
+| `vehicles` | `/admin/vehicles` | `?status=` |
+| `vehicle_images` | `/admin/vehicle-images` | `?vehicle_id=` |
+| `holds` | `/admin/holds` | `?status=`, `?vehicle_id=` |
+| `order_previews` | `/admin/order-previews` | `?vehicle_id=` |
+| `orders` | `/admin/orders` | `?status=` |
+| `webhook_subscriptions` | `/admin/webhooks` | — |
+
+  Ademas `GET /api/v1/admin/stats` devuelve conteos de las 8 tablas para el dashboard.
+  Errores en formato Problem Details: `404` si el registro no existe, `400` si faltan campos
+  obligatorios y `409` al eliminar un registro con dependencias (ej. una agencia con vehiculos).
 
 ---
 
@@ -53,7 +82,7 @@ booking-rentafacil/
 │   │   │   └── transformers/column-numeric.transformer.ts
 │   │   └── modules/autos/
 │   │       ├── autos.controller.ts     (endpoints del contrato)
-│   │       ├── admin.controller.ts     (BFF admin interno)
+│   │       ├── admin/                  (8 APIs CRUD, una por tabla + stats)
 │   │       ├── auth-demo.controller.ts (JWT local)
 │   │       ├── autos.service.ts        (logica de negocio)
 │   │       ├── dto/                    (CarSearchRequest, OrderHold, etc.)
@@ -179,7 +208,7 @@ npm run dev
 
 ## 6. Modelo de datos (interno, en Postgres)
 
-7 tablas relacionales dentro de una unica base de datos:
+8 tablas relacionales dentro de una unica base de datos (cada una con su API CRUD en `/api/v1/admin/...`):
 
 - **suppliers** (`supplier_id`, `name`, `brand`, `description`)
 - **depots** (`depot_id`, `name`, `city`, `address`, `airport`, `latitude`, `longitude`, `score`, `active`)
@@ -198,9 +227,10 @@ npm run dev
 - [x] Backend funcional con APIs documentadas segun contrato oficial (Swagger en `/api/docs`)
 - [x] Sistema de administracion funcional (panel `/admin` con CRUDs de vehiculos, depots, suppliers, ordenes)
 - [x] Marketplace web funcional (home + catalogo + detalle + flujo hold/preview/create + confirmacion)
-- [x] Base de datos operativa (PostgreSQL con 7 tablas)
+- [x] Base de datos operativa (PostgreSQL con 8 tablas, cada una con su API CRUD)
 - [x] Documento tecnico (`docs/documento-tecnico.docx`)
 - [x] Frontend responsivo (adaptable a cualquier pantalla)
+- [x] Navegable solo con teclado (Tab / Shift+Tab / Enter / Escape): enlace "Saltar al contenido", foco visible, menu movil accesible
 - [x] Cumplimiento 1:1 con `contracts/autos-openapi.yaml`
 - [x] Headers requeridos: `X-Affiliate-Id`, `Idempotency-Key`
 - [x] OAuth2 con scopes: `autos:read`, `autos:book`, `autos:cancel`, `autos:webhooks`

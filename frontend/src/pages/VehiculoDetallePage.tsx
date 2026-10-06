@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { catalog, orders } from '../api';
 import type { OrderPreviewResponse, VehicleDetail } from '../types';
@@ -34,6 +34,12 @@ export default function VehiculoDetallePage() {
   const [fin, setFin] = useState(params.get('fin') || TRES);
   const [extras, setExtras] = useState<string[]>([]);
   const [searchToken, setSearchToken] = useState(params.get('token') || '');
+  // El search_token lleva las fechas de la busqueda que lo emitio: si el usuario cambia las
+  // fechas aqui hay que pedir uno nuevo, o el preview cobraria los dias anteriores.
+  const fechasDelToken = useRef({ ini, fin });
+  useEffect(() => {
+    if (ini !== fechasDelToken.current.ini || fin !== fechasDelToken.current.fin) setSearchToken('');
+  }, [ini, fin]);
 
   const [preview, setPreview] = useState<OrderPreviewResponse | null>(null);
   const [driver, setDriver] = useState({ first_name: '', last_name: '', email: '', phone_number: '' });
@@ -79,6 +85,7 @@ export default function VehiculoDetallePage() {
         dropoff: { datetime: `${fin}T10:00:00Z`, location: {} },
       },
     });
+    fechasDelToken.current = { ini, fin };
     setSearchToken(res.search_token);
     return res.search_token;
   };
@@ -140,7 +147,8 @@ export default function VehiculoDetallePage() {
               gridTemplateColumns: 'repeat(5, 1fr)',
             }}>
               {imagenes.map((img, i) => (
-                <button key={i} onClick={() => setImgActiva(i)} style={{
+                <button key={i} type="button" onClick={() => setImgActiva(i)}
+                  aria-label={`Ver foto ${i + 1} de ${imagenes.length}`} aria-pressed={imgActiva === i} style={{
                   aspectRatio: '4 / 3', borderRadius: 8, overflow: 'hidden',
                   border: imgActiva === i ? '2px solid var(--strong)' : '1px solid var(--border)', opacity: imgActiva === i ? 1 : 0.75,
                   padding: 0, cursor: 'pointer',

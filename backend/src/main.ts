@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger, HttpException, BadRequestException } from '@nestjs/common';
+import { ValidationPipe, Logger, BadRequestException, ValidationError } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
@@ -30,10 +30,14 @@ async function bootstrap() {
       transform: true,
       transformOptions: { enableImplicitConversion: true },
       exceptionFactory: (errors) => {
-        const invalidParams = errors.map((e) => ({
-          name: e.property,
-          reason: Object.values(e.constraints || {}).join(', ') || 'Invalid',
-        }));
+        // Aplana errores anidados: { name: 'route.pickup.datetime', reason: '...' }
+        const flatten = (errs: ValidationError[], prefix = ''): { name: string; reason: string }[] =>
+          errs.flatMap((e) => {
+            const name = prefix ? `${prefix}.${e.property}` : e.property;
+            const own = e.constraints ? [{ name, reason: Object.values(e.constraints).join(', ') }] : [];
+            return [...own, ...flatten(e.children || [], name)];
+          });
+        const invalidParams = flatten(errors);
         return new BadRequestException({
           type: 'https://api.booking-hub.com/errors/validation-failed',
           title: 'Petición inválida',
@@ -47,36 +51,70 @@ async function bootstrap() {
 
   app.useGlobalFilters(new ProblemDetailsFilter());
 
+  // Metadatos y seguridad copiados de contracts/autos-openapi.yaml (info + components.securitySchemes)
   const swagger = new DocumentBuilder()
-    .setTitle('GDS Autos Core API - RentaFacil EC')
+    .setTitle('GDS Autos Core API')
     .setDescription(
-      'Implementacion del contrato oficial contracts/autos-openapi.yaml para el Reto 1 del proyecto Booking Prototipo. ' +
-      'Microservicio centralizado para busqueda, disponibilidad, reservas (ordenes) y postventa de renta de autos. ' +
-      'Autor: Anthony Rosero.',
+      'Microservicio centralizado para búsqueda, disponibilidad, reservas (órdenes) y postventa de renta de autos. ' +
+      'El dueño de la reserva (ownerId) se infiere del sub del token JWT. La lógica de pagos pertenece a otros dominios/APIs.\n\n' +
+      'Implementacion de RentaFacil EC (Reto 1 - Booking Prototipo) del contrato contracts/autos-openapi.yaml. ' +
+      'Para probar: obtenga un JWT con POST /api/v1/auth/token y peguelo en Authorize > bearer.',
     )
     .setVersion('1.0.0')
-    .addBearerAuth({
-      type: 'oauth2', flows: {
-        clientCredentials: {
+    .setContact('Joselyn Cadena', '', 'jlcadenac@puce.edu.ec')
+    .addOAuth2({
+      type: 'oauth2',
+      flows: {
+        authorizationCode: {
+          authorizationUrl: 'https://auth.booking-hub.com/oauth2/authorize',
           tokenUrl: 'https://auth.booking-hub.com/oauth2/token',
           scopes: {
-            'autos:read': 'Leer informacion de autos, catalogos y reservas',
+            'autos:read': 'Leer información de autos, catálogos y reservas',
             'autos:book': 'Crear, mantener en hold y alterar reservas',
             'autos:cancel': 'Cancelar reservas',
             'autos:webhooks': 'Gestionar webhooks',
           },
-        } as any,
+        },
+        clientCredentials: {
+          tokenUrl: 'https://auth.booking-hub.com/oauth2/token',
+          scopes: {
+            'autos:read': '(B2B) Leer',
+            'autos:book': '(B2B) Comprar',
+            'autos:cancel': '(B2B) Cancelar',
+            'autos:webhooks': '(B2B) Webhooks',
+          },
+        },
       },
-    } as any, 'OAuth2Security')
+    }, 'OAuth2Security')
+    // JWT emitido localmente por /auth/token (sustituye al Authorization Server en Reto 1)
+    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'bearer')
+    .addSecurityRequirements('OAuth2Security')
     .addTag('Búsqueda y Catálogo')
     .addTag('Información de Agencias y Proveedores')
     .addTag('Gestión de Órdenes (Reservas)')
     .addTag('Componentes Comunes')
     .addTag('Webhooks')
     .addTag('Autenticación (demo)', 'Endpoint auxiliar para emitir JWT localmente')
-    .addTag('Administracion Interna', 'BFF del panel admin (fuera del contrato publico)')
+    .addTag('Admin - Suppliers', 'CRUD de la tabla suppliers')
+    .addTag('Admin - Depots', 'CRUD de la tabla depots')
+    .addTag('Admin - Vehiculos', 'CRUD de la tabla vehicles')
+    .addTag('Admin - Imagenes de Vehiculos', 'CRUD de la tabla vehicle_images')
+    .addTag('Admin - Holds', 'CRUD de la tabla holds')
+    .addTag('Admin - Previsualizaciones de Orden', 'CRUD de la tabla order_previews')
+    .addTag('Admin - Ordenes', 'CRUD de la tabla orders')
+    .addTag('Admin - Webhooks', 'CRUD de la tabla webhook_subscriptions')
+    .addTag('Admin - Dashboard', 'Estadisticas agregadas')
     .build();
   const document = SwaggerModule.createDocument(app, swagger);
+  // Igual que el contrato: los endpoints publicos (header X-Affiliate-Id) y /auth/token
+  // anulan la seguridad global con `security: []`.
+  for (const [path, item] of Object.entries(document.paths)) {
+    for (const op of Object.values(item) as any[]) {
+      const publico = op?.parameters?.some((p: any) => p.in === 'header' && p.name === 'X-Affiliate-Id')
+        || path.endsWith('/auth/token');
+      if (publico) op.security = [];
+    }
+  }
   SwaggerModule.setup('api/docs', app, document, {
     swaggerOptions: {
       persistAuthorization: true,

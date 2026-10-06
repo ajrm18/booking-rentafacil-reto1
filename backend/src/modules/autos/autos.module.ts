@@ -2,9 +2,18 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommonModule } from '../../common/common.module';
 import { AutosService } from './autos.service';
+import { WebhookDispatcher } from './webhook-dispatcher.service';
 import { AutosController } from './autos.controller';
-import { AdminController } from './admin.controller';
 import { AuthDemoController } from './auth-demo.controller';
+import { DepotsAdminController } from './admin/depots-admin.controller';
+import { HoldsAdminController } from './admin/holds-admin.controller';
+import { OrderPreviewsAdminController } from './admin/order-previews-admin.controller';
+import { OrdersAdminController } from './admin/orders-admin.controller';
+import { StatsAdminController } from './admin/stats-admin.controller';
+import { SuppliersAdminController } from './admin/suppliers-admin.controller';
+import { VehicleImagesAdminController } from './admin/vehicle-images-admin.controller';
+import { VehiclesAdminController } from './admin/vehicles-admin.controller';
+import { WebhooksAdminController } from './admin/webhooks-admin.controller';
 import { Depot } from './entities/depot.entity';
 import { Hold } from './entities/hold.entity';
 import { Order } from './entities/order.entity';
@@ -22,7 +31,20 @@ import { WebhookSubscription } from './entities/webhook.entity';
       Hold, OrderPreview, Order, WebhookSubscription,
     ]),
   ],
-  controllers: [AutosController, AdminController, AuthDemoController],
-  providers: [AutosService],
+  controllers: [
+    AutosController,
+    AuthDemoController,
+    // Administracion interna: una API CRUD por cada tabla de la BD
+    SuppliersAdminController,
+    DepotsAdminController,
+    VehiclesAdminController,
+    VehicleImagesAdminController,
+    HoldsAdminController,
+    OrderPreviewsAdminController,
+    OrdersAdminController,
+    WebhooksAdminController,
+    StatsAdminController,
+  ],
+  providers: [AutosService, WebhookDispatcher],
 })
 export class AutosModule {}

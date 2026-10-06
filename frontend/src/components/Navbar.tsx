@@ -1,5 +1,5 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 
@@ -9,7 +9,22 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const { theme, toggle } = useTheme();
 
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const doLogout = () => { logout(); setOpen(false); nav('/'); };
+
+  // Menu movil accesible por teclado: al abrir, el foco va al primer enlace;
+  // Escape lo cierra y devuelve el foco al boton que lo abrio.
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLElement>('a, button')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOpen(false); toggleRef.current?.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
 
   return (
     <header style={{
@@ -20,7 +35,7 @@ export default function Navbar() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '0.85rem 1rem', gap: '1rem',
       }}>
-        <Link to="/" style={{
+        <Link to="/" aria-label="RentaFacil EC - Inicio" style={{
           display: 'flex', alignItems: 'center', gap: '0.5rem',
           fontWeight: 800, fontSize: '1.2rem', color: '#fff',
           textDecoration: 'none',
@@ -33,7 +48,7 @@ export default function Navbar() {
           RentaFacil <span style={{ color: 'var(--brand)' }}>EC</span>
         </Link>
 
-        <nav className="nav-desktop" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <nav className="nav-desktop" aria-label="Navegación principal" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <ThemeToggle theme={theme} onToggle={toggle} />
           <NavLink to="/" end className="nav-link">Inicio</NavLink>
           <NavLink to="/catalogo" className="nav-link">Catálogo</NavLink>
@@ -51,7 +66,8 @@ export default function Navbar() {
 
         <div className="nav-toggle" style={{ display: 'none', alignItems: 'center', gap: '0.5rem' }}>
           <ThemeToggle theme={theme} onToggle={toggle} />
-        <button onClick={() => setOpen(!open)} aria-label="Menu"
+        <button ref={toggleRef} type="button" onClick={() => setOpen(!open)}
+          aria-label={open ? 'Cerrar menú' : 'Abrir menú'} aria-expanded={open} aria-controls="menu-movil"
           style={{ display: 'inline-flex', padding: '12px 8px', borderRadius: 8, border: '1px solid var(--ink-3)', background: 'transparent' }}>
           <span style={{
             display: 'block', width: 22, height: 2, background: '#fff',
@@ -62,7 +78,7 @@ export default function Navbar() {
       </div>
 
       {open && (
-        <div className="nav-mobile" style={{
+        <nav id="menu-movil" ref={menuRef} className="nav-mobile" aria-label="Navegación principal" style={{
           borderTop: '1px solid var(--ink-3)', padding: '0.5rem 1rem 1rem',
           display: 'flex', flexDirection: 'column', gap: '0.25rem', background: 'var(--ink)',
         }}>
@@ -75,7 +91,7 @@ export default function Navbar() {
           ) : (
             <Link to="/login" className="btn btn-primary btn-block mt-1" onClick={() => setOpen(false)}>Ingresar</Link>
           )}
-        </div>
+        </nav>
       )}
 
       <style>{`
@@ -83,7 +99,8 @@ export default function Navbar() {
           color: #c9cbcf; text-decoration: none; font-size: 0.93rem; font-weight: 500;
           padding: 0.4rem 0.2rem; margin: 0 0.45rem; border-bottom: 2px solid transparent;
         }
-        .nav-link:hover, .nav-link-mobile:hover { color: #fff; text-decoration: none; }
+        .nav-link:hover, .nav-link-mobile:hover,
+        .nav-link:focus-visible, .nav-link-mobile:focus-visible { color: #fff; text-decoration: none; }
         .nav-link.active { color: #fff; border-bottom-color: var(--brand); }
         .nav-link-mobile.active { color: var(--brand); }
         .nav-link-mobile { padding: 0.75rem 0.25rem; margin: 0; border-bottom: 1px solid var(--ink-3); }

@@ -3,8 +3,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, MoreThanOrEqual, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
+import { WebhookDispatcher, WebhookEvent } from './webhook-dispatcher.service';
 import { Vehicle } from './entities/vehicle.entity';
 import { Depot } from './entities/depot.entity';
 import { Supplier } from './entities/supplier.entity';
@@ -13,7 +14,11 @@ import { Hold } from './entities/hold.entity';
 import { OrderPreview } from './entities/order-preview.entity';
 import { Order } from './entities/order.entity';
 import { WebhookSubscription } from './entities/webhook.entity';
-import { CarSearchRequestDto, CarSearchResponseDto } from './dto/search.dto';
+import {
+  CarDetailsRequestDto, CarSearchRequestDto, CarSearchResponseDto, DepotScoresRequestDto,
+  DepotsRequestDto, SuppliersRequestDto,
+} from './dto/search.dto';
+import { AuthContext } from '../../common/guards/oauth2.guard';
 import {
   OrderCreateRequestDto, OrderHoldRequestDto, OrderHoldResponseDto,
   OrderModifyRequestDto, OrderPreviewRequestDto, OrderPreviewResponseDto,
@@ -30,8 +35,20 @@ import {
 export class AutosService {
   private static readonly HOLD_MINUTES = 15;
   private static readonly PREVIEW_MINUTES = 30;
+  private static readonly EXTRA_PER_DAY = 5;
+  private static readonly TAX_RATE = 0.15;
+  private static readonly IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+  private static readonly SEARCH_TOKEN_MAX = 200;
+
+  /**
+   * Respuestas ya emitidas para modify/cancel, por Idempotency-Key: un reintento con la misma
+   * clave devuelve el mismo resultado en vez de volver a aplicar la operacion.
+   * (create usa la columna orders.idempotency_key). En memoria para Reto 1.
+   */
+  private readonly idempotent = new Map<string, { expiresAt: number; result: any }>();
 
   constructor(
+    private readonly dispatcher: WebhookDispatcher,
     @InjectRepository(Vehicle) private readonly vehicles: Repository<Vehicle>,
     @InjectRepository(Depot) private readonly depots: Repository<Depot>,
     @InjectRepository(Supplier) private readonly suppliers: Repository<Supplier>,
@@ -58,17 +75,16 @@ export class AutosService {
         code: 'VALIDATION_FAILED',
       });
     }
-    if (req.driver.age < 21) {
-      // no error, pero es una restriccion, se refleja en la busqueda vacia posible
-    }
-
-    const totalDays = Math.max(1, Math.ceil((dropoff.getTime() - pickup.getTime()) / (1000 * 60 * 60 * 24)));
+    const totalDays = this.daysBetween(pickup, dropoff);
 
     const qb = this.vehicles.createQueryBuilder('v')
       .leftJoinAndSelect('v.depot', 'd')
       .leftJoinAndSelect('v.supplier', 's')
-      .leftJoinAndSelect('v.images', 'i')
       .where('v.status = :st', { st: 'AVAILABLE' });
+
+    // Excluir vehiculos con orden CONFIRMED (ocupados)
+    const busyIds = await this.busyVehicleIds();
+    if (busyIds.size > 0) qb.andWhere('v.vehicle_id NOT IN (:...busy)', { busy: [...busyIds] });
 
     const airport = req.route.pickup.location?.airport;
     const cityId = req.route.pickup.location?.city_id;
@@ -83,43 +99,38 @@ export class AutosService {
     }
 
     const limit = req.maximum_results || 100;
-    qb.take(limit);
-    const vehicles = await qb.getMany();
-
-    // Excluir vehiculos con orden CONFIRMED o hold vigente que se solapa
-    const busyIds = await this.busyVehicleIds(req.route.pickup.datetime, req.route.dropoff.datetime);
-    const available = vehicles.filter((v) => !busyIds.has(v.vehicle_id));
-
-    const search_token = `tok-${randomUUID()}`;
+    const page = this.parsePage(req.page);
+    qb.orderBy('v.price_per_day', 'ASC').addOrderBy('v.vehicle_id', 'ASC')
+      .skip((page - 1) * limit).take(limit);
+    const [vehicles, total] = await qb.getManyAndCount();
 
     return {
       request_id: randomUUID(),
-      data: available.map((v) => ({
+      data: vehicles.map((v) => ({
         vehicle_id: v.vehicle_id,
         price: Number((Number(v.price_per_day) * totalDays).toFixed(2)),
         supplier_id: v.supplier_id,
       })),
-      metadata: { total_results: available.length, next_page: null },
-      search_token,
+      metadata: { total_results: total, next_page: page * limit < total ? String(page + 1) : null },
+      search_token: this.encodeSearchToken(req),
     };
   }
 
-  async getDetails(req: any): Promise<any> {
+  async getDetails(req: CarDetailsRequestDto): Promise<any> {
     const where: any = {};
-    let vehicles: Vehicle[];
-    if (Array.isArray(req?.vehicle_ids) && req.vehicle_ids.length > 0) {
-      vehicles = await this.vehicles.find({
-        where: { vehicle_id: In(req.vehicle_ids) },
-        relations: ['images', 'depot', 'supplier'],
-      });
-    } else {
-      vehicles = await this.vehicles.find({
-        relations: ['images', 'depot', 'supplier'],
-        take: req?.maximum_results || 100,
-      });
-    }
+    if (Array.isArray(req?.vehicle_ids) && req.vehicle_ids.length > 0) where.vehicle_id = In(req.vehicle_ids);
+    // last_modified: solo vehiculos cambiados desde esa fecha (sincronizacion incremental)
+    if (req?.last_modified) where.updated_at = MoreThanOrEqual(new Date(req.last_modified));
+    const { take, skip, page } = this.pageWindow(req);
+    const [vehicles, total] = await this.vehicles.findAndCount({
+      where,
+      relations: ['images', 'depot', 'supplier'],
+      order: { vehicle_id: 'ASC' },
+      take, skip,
+    });
     return {
       request_id: randomUUID(),
+      metadata: this.pageMetadata(page, take, total),
       data: vehicles.map((v) => ({
         vehicle_id: v.vehicle_id,
         make: v.make,
@@ -150,8 +161,11 @@ export class AutosService {
   //  Agencias y Proveedores
   // ═════════════════════════════════════════════════════════════════════════
 
-  async getDepots(_req: any): Promise<any> {
-    const depots = await this.depots.find({ where: { active: true }, order: { city: 'ASC', name: 'ASC' } });
+  async getDepots(req: DepotsRequestDto): Promise<any> {
+    const { take, skip, page } = this.pageWindow(req);
+    const [depots, total] = await this.depots.findAndCount({
+      where: { active: true }, order: { city: 'ASC', name: 'ASC' }, take, skip,
+    });
     return {
       request_id: randomUUID(),
       data: depots.map((d) => ({
@@ -167,31 +181,35 @@ export class AutosService {
             : undefined,
         },
       })),
-      metadata: { total_results: depots.length },
+      metadata: this.pageMetadata(page, take, total),
     };
   }
 
-  async getDepotScores(_req: any): Promise<any> {
-    const depots = await this.depots.find({ where: { active: true } });
+  async getDepotScores(req: DepotScoresRequestDto): Promise<any> {
+    const { take, skip, page } = this.pageWindow(req);
+    const [depots, total] = await this.depots.findAndCount({
+      where: { active: true }, order: { depot_id: 'ASC' }, take, skip,
+    });
     return {
       request_id: randomUUID(),
       data: depots.map((d) => ({
         depot_id: d.depot_id,
         score: Number(d.score),
       })),
-      metadata: { total_results: depots.length },
+      metadata: this.pageMetadata(page, take, total),
     };
   }
 
-  async getSuppliers(req: any): Promise<any> {
-    let suppliers: Supplier[];
-    if (Array.isArray(req?.suppliers) && req.suppliers.length > 0) {
-      suppliers = await this.suppliers.find({ where: { supplier_id: In(req.suppliers) } });
-    } else {
-      suppliers = await this.suppliers.find({ order: { name: 'ASC' } });
-    }
+  async getSuppliers(req: SuppliersRequestDto): Promise<any> {
+    const { take, skip, page } = this.pageWindow(req);
+    // suppliers vacio o ausente => todos (segun SuppliersRequest.suppliers)
+    const [suppliers, total] = await this.suppliers.findAndCount({
+      where: Array.isArray(req?.suppliers) && req.suppliers.length > 0 ? { supplier_id: In(req.suppliers) } : {},
+      order: { name: 'ASC' }, take, skip,
+    });
     return {
       request_id: randomUUID(),
+      metadata: this.pageMetadata(page, take, total),
       data: suppliers.map((s) => ({
         supplier_id: s.supplier_id,
         name: s.name,
@@ -251,6 +269,7 @@ export class AutosService {
     if (!vehicle || vehicle.status !== 'AVAILABLE') {
       throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehiculo ya no esta disponible');
     }
+    this.decodeSearchToken(req.search_token);
 
     const hold_id = `HLD-${randomUUID().slice(0, 8)}`;
     const expires_at = new Date(Date.now() + AutosService.HOLD_MINUTES * 60 * 1000);
@@ -271,22 +290,25 @@ export class AutosService {
     const vehicle = await this.vehicles.findOne({ where: { vehicle_id: req.vehicle_id } });
     if (!vehicle) throw new NotFoundException(this.problem('CAR_NO_LONGER_AVAILABLE', 'Vehiculo no encontrado', 404));
 
-    // Recuperamos ruta del hold si se envio, si no asumimos 3 dias por defecto (para demo)
-    let route: any = null;
-    let days = 3;
+    // La ruta (y por tanto los dias) viaja dentro del search_token emitido por /search
+    const search = this.decodeSearchToken(req.search_token);
+    const route = search.route;
+    const days = this.daysBetween(new Date(route.pickup.datetime), new Date(route.dropoff.datetime));
+
     if (req.hold_id) {
       const hold = await this.holds.findOne({ where: { hold_id: req.hold_id } });
       if (!hold) throw new NotFoundException(this.problem('BOOKING_NOT_CONFIRMED', 'Hold no encontrado', 404));
+      if (hold.vehicle_id !== req.vehicle_id) {
+        throw new BadRequestException(this.problem('VALIDATION_FAILED', 'El hold pertenece a otro vehiculo', 400));
+      }
       if (hold.expires_at.getTime() < Date.now()) {
         throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El bloqueo expiro, vuelva a buscar');
       }
     }
 
     const extras = req.extras || [];
-    const extrasPrice = extras.length * 5; // USD 5 por extra por dia
-    const base = Number(vehicle.price_per_day) * days;
-    const taxes = Number((base * 0.15).toFixed(2));
-    const total = Number((base + extrasPrice * days + taxes).toFixed(2));
+    const breakdown = this.priceBreakdown(Number(vehicle.price_per_day), days, extras.length);
+    const currency = search.currency || 'USD';
 
     const order_preview_id = `PRV-${randomUUID().slice(0, 8)}`;
     const expires_at = new Date(Date.now() + AutosService.PREVIEW_MINUTES * 60 * 1000);
@@ -298,16 +320,16 @@ export class AutosService {
       hold_id: req.hold_id,
       route,
       extras,
-      total_price: total,
-      currency: 'USD',
+      total_price: breakdown.total,
+      currency,
       total_days: days,
-      breakdown: { base, extras: extrasPrice * days, taxes, days },
+      breakdown: breakdown.detail,
       expires_at,
     }));
 
     return {
       request_id: randomUUID(),
-      data: { order_preview_id, total_price: total, currency: 'USD', breakdown: { base, extras: extrasPrice * days, taxes, days } },
+      data: { order_preview_id, total_price: breakdown.total, currency, breakdown: breakdown.detail },
     };
   }
 
@@ -332,9 +354,8 @@ export class AutosService {
       throw new BadRequestException(this.problem('PAYMENT_REFERENCE_INVALID', 'payment_reference invalida', 400));
     }
 
-    const locator = this.generateLocator();
     const order = this.orders.create({
-      locator,
+      locator: this.generateLocator(),
       status: 'CONFIRMED',
       vehicle_id: vehicle.vehicle_id,
       owner_sub: ownerSub,
@@ -359,47 +380,65 @@ export class AutosService {
     vehicle.status = 'RESERVED';
     await this.vehicles.save(vehicle);
 
-    await this.fireWebhook('CAR_ORDER_CONFIRMED', saved.order_id);
-
-    return this.toOrderDetail(saved);
+    const detail = this.toOrderDetail(saved);
+    this.fireWebhook('CAR_ORDER_CONFIRMED', saved.order_id, detail);
+    return detail;
   }
 
-  async getOrder(orderId: string): Promise<any> {
-    const order = await this.orders.findOne({ where: { order_id: orderId } });
-    if (!order) throw new NotFoundException(this.problem('BOOKING_NOT_CONFIRMED', 'Orden no encontrada', 404));
-    return this.toOrderDetail(order);
+  async getOrder(orderId: string, auth: AuthContext): Promise<any> {
+    return this.toOrderDetail(await this.findOwnedOrder(orderId, auth));
   }
 
-  async modifyOrder(orderId: string, req: OrderModifyRequestDto): Promise<any> {
-    const order = await this.orders.findOne({ where: { order_id: orderId } });
-    if (!order) throw new NotFoundException(this.problem('BOOKING_NOT_CONFIRMED', 'Orden no encontrada', 404));
-    if (order.status !== 'CONFIRMED') {
-      throw this.conflict('CANCELLATION_NOT_ALLOWED', `Orden en estado ${order.status}, no se puede modificar`);
-    }
-    const set = new Set<string>(order.extras || []);
-    (req.extras_to_remove || []).forEach((e) => set.delete(e));
-    (req.extras_to_add || []).forEach((e) => set.add(e));
-    order.extras = Array.from(set);
-    if (req.route) order.route_details = req.route as any;
-    const saved = await this.orders.save(order);
-    return this.toOrderDetail(saved);
+  async modifyOrder(orderId: string, req: OrderModifyRequestDto, auth: AuthContext, idempotencyKey: string): Promise<any> {
+    return this.once(`modify:${orderId}:${idempotencyKey}`, async () => {
+      const order = await this.findOwnedOrder(orderId, auth);
+      if (order.status !== 'CONFIRMED') {
+        throw this.conflict('BOOKING_NOT_CONFIRMED', `Orden en estado ${order.status}, no se puede modificar`);
+      }
+      const set = new Set<string>(order.extras || []);
+      (req.extras_to_remove || []).forEach((e) => set.delete(e));
+      (req.extras_to_add || []).forEach((e) => set.add(e));
+      order.extras = Array.from(set);
+      if (req.route) {
+        const pickup = new Date(req.route.pickup.datetime);
+        const dropoff = new Date(req.route.dropoff.datetime);
+        if (dropoff <= pickup) {
+          throw new BadRequestException(this.problem('VALIDATION_FAILED',
+            'route.dropoff.datetime debe ser posterior a route.pickup.datetime', 400));
+        }
+        order.route_details = req.route as any;
+      }
+
+      // Recalcular el precio con los extras y la ruta vigentes (misma tarifa que /orders/preview)
+      const route = order.route_details;
+      if (route?.pickup?.datetime && route?.dropoff?.datetime) {
+        const vehicle = await this.vehicles.findOne({ where: { vehicle_id: order.vehicle_id } });
+        if (vehicle) {
+          const days = this.daysBetween(new Date(route.pickup.datetime), new Date(route.dropoff.datetime));
+          order.total_price = this.priceBreakdown(Number(vehicle.price_per_day), days, order.extras.length).total;
+        }
+      }
+      return this.toOrderDetail(await this.orders.save(order));
+    });
   }
 
-  async cancelOrder(orderId: string): Promise<void> {
-    const order = await this.orders.findOne({ where: { order_id: orderId } });
-    if (!order) throw new NotFoundException(this.problem('BOOKING_NOT_CONFIRMED', 'Orden no encontrada', 404));
-    if (order.status === 'CANCELLED') {
-      throw this.conflict('CANCELLATION_NOT_ALLOWED', 'La orden ya estaba cancelada');
-    }
-    order.status = 'CANCELLED';
-    await this.orders.save(order);
+  async cancelOrder(orderId: string, auth: AuthContext, idempotencyKey: string): Promise<any> {
+    return this.once(`cancel:${orderId}:${idempotencyKey}`, async () => {
+      const order = await this.findOwnedOrder(orderId, auth);
+      if (order.status === 'CANCELLED') {
+        throw this.conflict('CANCELLATION_NOT_ALLOWED', 'La orden ya estaba cancelada');
+      }
+      order.status = 'CANCELLED';
+      await this.orders.save(order);
 
-    const vehicle = await this.vehicles.findOne({ where: { vehicle_id: order.vehicle_id } });
-    if (vehicle) {
-      vehicle.status = 'AVAILABLE';
-      await this.vehicles.save(vehicle);
-    }
-    await this.fireWebhook('CAR_ORDER_CANCELLED', order.order_id);
+      const vehicle = await this.vehicles.findOne({ where: { vehicle_id: order.vehicle_id } });
+      if (vehicle) {
+        vehicle.status = 'AVAILABLE';
+        await this.vehicles.save(vehicle);
+      }
+      this.fireWebhook('CAR_ORDER_CANCELLED', order.order_id, { locator: order.locator, status: order.status });
+      return { status: 'CANCELLED', order_id: order.order_id };
+    });
   }
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -421,20 +460,108 @@ export class AutosService {
     if (r.affected === 0) throw new NotFoundException(this.problem('VALIDATION_FAILED', 'Webhook no encontrado', 404));
   }
 
-  private async fireWebhook(eventType: string, resourceId: string): Promise<void> {
-    // En Reto 1 solo persistimos la intencion; el disparo real llega en Reto 2 (EDA).
-    // Aqui simplemente escribimos a consola para dejar constancia del evento.
-    console.log(`[webhook] ${eventType} -> ${resourceId}`);
+  private fireWebhook(eventType: WebhookEvent, resourceId: string, data?: Record<string, any>): void {
+    this.dispatcher.dispatch(eventType, resourceId, data);
   }
 
   // ═════════════════════════════════════════════════════════════════════════
   //  Utilidades internas
   // ═════════════════════════════════════════════════════════════════════════
 
-  private async busyVehicleIds(fechaInicio: string, fechaFin: string): Promise<Set<string>> {
-    // Ordenes activas se marcan por status CONFIRMED. Como Reto 1 usa RESERVED en el vehiculo,
-    // usamos ese estado como filtro final; ademas podriamos cruzar con order.route_details.
-    const active = await this.orders.find({ where: { status: 'CONFIRMED' } });
+  /**
+   * El dueno de la orden se infiere del `sub` del JWT (info.description del contrato).
+   * Solo el dueno o un administrador (scope autos:webhooks) pueden verla o alterarla;
+   * a cualquier otro se le responde 404 para no revelar que la orden existe.
+   */
+  private async findOwnedOrder(orderId: string, auth: AuthContext): Promise<Order> {
+    const order = await this.orders.findOne({ where: { order_id: orderId } });
+    const isAdmin = auth?.scopes?.includes('autos:webhooks');
+    if (!order || (!isAdmin && order.owner_sub !== auth?.sub)) {
+      throw new NotFoundException(this.problem('BOOKING_NOT_CONFIRMED', 'Orden no encontrada', 404));
+    }
+    return order;
+  }
+
+  /** Ejecuta `fn` una sola vez por clave de idempotencia y reutiliza su resultado en reintentos. */
+  private async once<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const hit = this.idempotent.get(key);
+    if (hit && hit.expiresAt > now) return hit.result;
+    const result = await fn();
+    this.idempotent.set(key, { expiresAt: now + AutosService.IDEMPOTENCY_TTL_MS, result });
+    if (this.idempotent.size > 5000) {
+      for (const [k, v] of this.idempotent) if (v.expiresAt <= now) this.idempotent.delete(k);
+    }
+    return result;
+  }
+
+  private priceBreakdown(pricePerDay: number, days: number, extrasCount: number) {
+    const base = Number((pricePerDay * days).toFixed(2));
+    const extras = extrasCount * AutosService.EXTRA_PER_DAY * days;
+    const taxes = Number((base * AutosService.TAX_RATE).toFixed(2));
+    const total = Number((base + extras + taxes).toFixed(2));
+    return { total, detail: { base, extras, taxes, days } };
+  }
+
+  private daysBetween(pickup: Date, dropoff: Date): number {
+    return Math.max(1, Math.ceil((dropoff.getTime() - pickup.getTime()) / (1000 * 60 * 60 * 24)));
+  }
+
+  /**
+   * El search_token es opaco para el cliente pero transporta el contexto de la busqueda
+   * (ruta, moneda, edad del conductor) para que /orders/hold y /orders/preview no tengan
+   * que pedirlo de nuevo: base64url de un JSON compacto con prefijo "tok-".
+   * Debe caber en holds/order_previews.search_token (varchar 200); si las ubicaciones lo
+   * exceden se omiten (las fechas, que definen el precio, siempre viajan).
+   */
+  private encodeSearchToken(req: CarSearchRequestDto): string {
+    const enc = (o: object) => `tok-${Buffer.from(JSON.stringify(o)).toString('base64url')}`;
+    const ctx: Record<string, any> = {
+      n: randomUUID().slice(0, 8),
+      p: req.route.pickup.datetime, d: req.route.dropoff.datetime,
+      c: req.currency, a: req.driver?.age,
+      pl: req.route.pickup.location, dl: req.route.dropoff.location,
+    };
+    const full = enc(ctx);
+    if (full.length <= AutosService.SEARCH_TOKEN_MAX) return full;
+    delete ctx.pl; delete ctx.dl;
+    return enc(ctx);
+  }
+
+  private decodeSearchToken(token: string): { route: any; currency?: string; driver_age?: number } {
+    try {
+      const t = JSON.parse(Buffer.from(token.replace(/^tok-/, ''), 'base64url').toString('utf8'));
+      if (t?.p && t?.d && !isNaN(Date.parse(t.p)) && !isNaN(Date.parse(t.d))) {
+        return {
+          route: { pickup: { datetime: t.p, location: t.pl ?? {} }, dropoff: { datetime: t.d, location: t.dl ?? {} } },
+          currency: t.c, driver_age: t.a,
+        };
+      }
+    } catch { /* cae al error de abajo */ }
+    throw new BadRequestException({
+      ...this.problem('VALIDATION_FAILED', 'search_token invalido; realice una nueva busqueda con POST /search', 400),
+      invalidParams: [{ name: 'search_token', reason: 'No corresponde a una busqueda emitida por /search' }],
+    });
+  }
+
+  private parsePage(page?: string): number {
+    const n = Number.parseInt(page ?? '1', 10);
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  }
+
+  private pageWindow(req?: { maximum_results?: number; page?: string }) {
+    const take = Math.min(Math.max(req?.maximum_results || 100, 1), 500);
+    const page = this.parsePage(req?.page);
+    return { take, skip: (page - 1) * take, page };
+  }
+
+  private pageMetadata(page: number, take: number, total: number) {
+    return { total_results: total, next_page: page * take < total ? String(page + 1) : null };
+  }
+
+  private async busyVehicleIds(): Promise<Set<string>> {
+    // Un vehiculo con orden CONFIRMED esta ocupado hasta que se cancele (Reto 1 no maneja calendario).
+    const active = await this.orders.find({ where: { status: 'CONFIRMED' }, select: { vehicle_id: true } });
     return new Set(active.map((o) => o.vehicle_id));
   }
 
