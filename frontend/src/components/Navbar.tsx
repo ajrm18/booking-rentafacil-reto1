@@ -60,7 +60,10 @@ export default function Navbar() {
               <button className="btn btn-sm nav-btn-outline" onClick={doLogout}>Salir</button>
             </>
           ) : (
-            <Link to="/login" className="btn btn-primary btn-sm">Ingresar</Link>
+            <>
+              <Link to="/registro" className="btn btn-sm nav-btn-outline">Registrarse</Link>
+              <Link to="/login" className="btn btn-primary btn-sm">Ingresar</Link>
+            </>
           )}
         </nav>
 
@@ -89,7 +92,10 @@ export default function Navbar() {
           {user ? (
             <button className="btn nav-btn-outline mt-1" onClick={doLogout}>Salir ({user.email})</button>
           ) : (
-            <Link to="/login" className="btn btn-primary btn-block mt-1" onClick={() => setOpen(false)}>Ingresar</Link>
+            <>
+              <Link to="/login" className="btn btn-primary btn-block mt-1" onClick={() => setOpen(false)}>Ingresar</Link>
+              <Link to="/registro" className="btn nav-btn-outline btn-block mt-1" onClick={() => setOpen(false)}>Registrarse</Link>
+            </>
           )}
         </nav>
       )}

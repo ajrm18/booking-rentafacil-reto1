@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { filtrarEmail, msgEmail } from '../utils/validaciones';
 
 export default function LoginPage() {
   const { login } = useAuth();
   const nav = useNavigate();
+  const from = (useLocation().state as { from?: string } | null)?.from;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -19,7 +20,7 @@ export default function LoginPage() {
     setError(''); setLoading(true);
     try {
       const u = await login(email, password);
-      nav(u.role === 'admin' ? '/admin' : '/');
+      nav(from || (u.role === 'admin' ? '/admin' : '/'));
     } catch (e: any) {
       setError(e?.message || 'Credenciales inválidas');
     } finally { setLoading(false); }
@@ -49,6 +50,9 @@ export default function LoginPage() {
               {loading ? 'Autenticando...' : 'Ingresar'}
             </button>
           </form>
+          <p className="text-muted mt-2" style={{ fontSize: '0.9rem', textAlign: 'center', marginBottom: 0 }}>
+            ¿Aún no tienes cuenta? <Link to="/registro" state={{ from }}>Regístrate aquí</Link>
+          </p>
           <div className="alert alert-info mt-2" style={{ fontSize: '0.85rem' }}>
             <b>Cuentas de demostración:</b>
             <div style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>

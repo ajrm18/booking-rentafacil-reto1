@@ -114,7 +114,7 @@ export default function VehiculoDetallePage() {
   const previsualizar = async () => {
     setError(''); setLoading(true);
     try {
-      if (!user) { nav('/login'); return; }
+      if (!user) { nav('/login', { state: { from: window.location.pathname + window.location.search } }); return; }
       if (!v || fechasInvalidas) return;
       const tok = await asegurarSearchToken();
       const hold = await orders.hold(v.vehicle_id, tok, EDAD_CONDUCTOR);

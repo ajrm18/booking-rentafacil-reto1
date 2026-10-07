@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import type { AuthUser } from '../types';
+import type { AuthUser, RegisterInput, TokenResponse } from '../types';
 import { auth as authApi } from '../api';
 
 interface AuthState {
@@ -7,6 +7,7 @@ interface AuthState {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<AuthUser>;
+  register: (data: RegisterInput) => Promise<AuthUser>;
   logout: () => void;
 }
 
@@ -26,14 +27,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     finally { setLoading(false); }
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const res = await authApi.login(email, password);
+  const guardarSesion = (res: TokenResponse) => {
     setToken(res.access_token);
     setUser(res.user);
     localStorage.setItem('rf_token', res.access_token);
     localStorage.setItem('rf_user', JSON.stringify(res.user));
     return res.user;
   };
+
+  const login = async (email: string, password: string) => guardarSesion(await authApi.login(email, password));
+  const register = async (data: RegisterInput) => guardarSesion(await authApi.register(data));
 
   const logout = () => {
     setToken(null); setUser(null);
@@ -42,7 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

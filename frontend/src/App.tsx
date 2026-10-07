@@ -6,6 +6,7 @@ import HomePage from './pages/HomePage';
 import CatalogoPage from './pages/CatalogoPage';
 import VehiculoDetallePage from './pages/VehiculoDetallePage';
 import LoginPage from './pages/LoginPage';
+import RegistroPage from './pages/RegistroPage';
 import MisReservasPage from './pages/MisReservasPage';
 import ReservaConfirmadaPage from './pages/ReservaConfirmadaPage';
 import AdminLayout from './admin/AdminLayout';
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="/catalogo" element={<CatalogoPage />} />
           <Route path="/vehiculos/:id" element={<VehiculoDetallePage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/registro" element={<RegistroPage />} />
           <Route path="/mis-reservas" element={
             <PrivateRoute><MisReservasPage /></PrivateRoute>
           } />

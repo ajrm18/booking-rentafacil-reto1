@@ -128,6 +128,16 @@ export interface AdminUser {
 
 export type AdminUserInput = Partial<Omit<AdminUser, 'user_id' | 'created_at'>> & { password?: string };
 
+/** Datos del registro público de clientes (POST /auth/register). */
+export interface RegisterInput {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  national_id: string;
+  password: string;
+}
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;

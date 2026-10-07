@@ -1,13 +1,16 @@
 import { api, uuidv4 } from './client';
 import type {
   AdminUser, AdminUserInput, CarSearchRequest, CarSearchResponse, Depot, OrderDetail,
-  OrderHoldResponse, OrderPreviewResponse, Supplier, TokenResponse, VehicleDetail,
+  OrderHoldResponse, OrderPreviewResponse, RegisterInput, Supplier, TokenResponse, VehicleDetail,
 } from '../types';
 
 /** Autenticación demo local */
 export const auth = {
   login: (email: string, password: string) =>
     api.post<TokenResponse>('/auth/token', { email, password }).then((r) => r.data),
+  /** Registro de un cliente nuevo: devuelve el mismo TokenResponse que el login. */
+  register: (data: RegisterInput) =>
+    api.post<TokenResponse>('/auth/register', data).then((r) => r.data),
 };
 
 /** Endpoints públicos del contrato GDS Autos Core */

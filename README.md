@@ -48,6 +48,7 @@ Todos bajo prefijo `/api/v1` (equivalente al `servers.url` = `https://.../autos/
 
 **Extra (fuera del contrato público) para cumplir el Reto 1:**
 - `POST /api/v1/auth/token` — Authorization Server local (equivalente al OAuth2 de `auth.booking-hub.com`), contra la tabla `users` (contraseñas con hash scrypt).
+- `POST /api/v1/auth/register` — registro público de clientes (página `/registro`): nombre, apellido, correo, teléfono, cédula y contraseña, todos obligatorios y con las mismas reglas que "Nuevo cliente" del admin. El rol siempre es `client` (enviar `role` da `400`); responde igual que `/auth/token`, así el cliente entra directamente.
 - `GET /api/v1/account/orders` — órdenes del usuario autenticado (dueño = `sub` del token), usado por "Mis reservas".
 - **9 APIs de administración, una por cada tabla** (OAuth2 scope `autos:webhooks`). Cada una expone
   `GET /` (listar), `GET /:id`, `POST /`, `PUT /:id` y `DELETE /:id` bajo `/api/v1/admin/<recurso>`:
