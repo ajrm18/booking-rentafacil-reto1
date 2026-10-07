@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { admin } from '../api';
+import { filtrarNombre } from '../utils/validaciones';
 
 export default function DepotsAdmin() {
   const [lista, setLista] = useState<any[]>([]);
@@ -45,11 +46,11 @@ export default function DepotsAdmin() {
           <form onSubmit={submit} style={{ display: 'grid', gap: '0.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
             <div className="form-group" style={{ margin: 0 }}>
               <label className="form-label">Nombre</label>
-              <input className="form-control" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <input className="form-control" required minLength={2} maxLength={160} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div className="form-group" style={{ margin: 0 }}>
               <label className="form-label">Ciudad</label>
-              <input className="form-control" required value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
+              <input className="form-control" required maxLength={80} value={form.city} onChange={(e) => setForm({ ...form, city: filtrarNombre(e.target.value) })} />
             </div>
             <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>
               <label className="form-label">Dirección</label>
@@ -57,7 +58,7 @@ export default function DepotsAdmin() {
             </div>
             <div className="form-group" style={{ margin: 0 }}>
               <label className="form-label">IATA (opcional)</label>
-              <input className="form-control" value={form.airport || ''} onChange={(e) => setForm({ ...form, airport: e.target.value })} />
+              <input className="form-control" maxLength={3} placeholder="UIO" pattern="[A-Z]{3}" title="3 letras (ej. UIO)" value={form.airport || ''} onChange={(e) => setForm({ ...form, airport: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })} />
             </div>
             <div className="form-group" style={{ margin: 0 }}>
               <label className="form-label">Puntuación</label>

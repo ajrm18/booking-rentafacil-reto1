@@ -49,10 +49,29 @@ try {
   console.log('\n# Preview');
   await page.getByRole('button', { name: 'Continuar' }).click();
   await page.getByRole('heading', { name: 'Confirmar reserva' }).waitFor();
-  const nombre = page.locator('aside input').first();
-  await nombre.fill('Maria');
-  await page.locator('aside input').nth(1).fill('Prueba');
   check('preview generado', true);
+
+  console.log('\n# Datos del conductor (autollenado y validación)');
+  const nombre = page.locator('#drv-first_name'), apellido = page.locator('#drv-last_name');
+  const correo = page.locator('#drv-email'), telefono = page.locator('#drv-phone_number');
+  await page.waitForFunction(() => document.querySelector('#drv-phone_number')?.value, null, { timeout: 30_000 }).catch(() => {});
+  check('autollena nombre, apellido, correo y teléfono desde la cuenta',
+    (await nombre.inputValue()) === 'María' && (await apellido.inputValue()) === 'Maldonado'
+    && (await correo.inputValue()) === 'maria@example.com' && (await telefono.inputValue()) === '0983563584',
+    JSON.stringify([await nombre.inputValue(), await apellido.inputValue(), await correo.inputValue(), await telefono.inputValue()]));
+  await telefono.fill('');
+  await telefono.pressSequentially('09abc835x63584');
+  check('el teléfono no acepta letras', (await telefono.inputValue()) === '0983563584', await telefono.inputValue());
+  await nombre.fill(''); await nombre.pressSequentially('M4ría');
+  check('el nombre no acepta números', (await nombre.inputValue()) === 'María', await nombre.inputValue());
+  await correo.fill(''); await correo.pressSequentially('maria@@example.com');
+  check('el correo admite una sola @', (await correo.inputValue()) === 'maria@example.com', await correo.inputValue());
+  await correo.fill('maria@example'); await correo.blur();
+  check('correo sin dominio: mensaje en línea', await page.getByText('Ingresa un correo válido').isVisible());
+  await page.getByRole('button', { name: 'Confirmar reserva' }).click();
+  check('con errores no abre el pago', (await page.getByRole('dialog').count()) === 0);
+  await correo.fill('maria@example.com');
+  check('campos editables y válidos de nuevo', (await page.locator('[id^="drv-"][aria-invalid="true"]').count()) === 0);
 
   console.log('\n# Simulador de pago');
   await page.getByRole('button', { name: 'Confirmar reserva' }).click();
@@ -60,7 +79,8 @@ try {
   await dialog.waitFor();
   const totalTxt = await dialog.locator('.pay-total').textContent();
   check('muestra "Pagar $X USD"', /^Pagar \$\d+\.\d{2} USD$/.test(totalTxt?.trim() || ''), totalTxt);
-  check('banner de modo simulador visible', await dialog.getByText('Modo simulador').isVisible());
+  check('sin recuadro amarillo; solo el botón "Usar tarjeta de prueba"',
+    (await dialog.getByText('Modo simulador').count()) === 0 && await dialog.getByRole('button', { name: 'Usar tarjeta de prueba' }).isVisible());
   let a = await activo();
   check('al abrir, el foco va al primer campo', a.label === 'Número de tarjeta', JSON.stringify(a));
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { filtrarEmail, msgEmail } from '../utils/validaciones';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -12,6 +13,9 @@ export default function LoginPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errEmail = msgEmail(email);
+    if (errEmail) { setError(errEmail); return; }
+    if (!password) { setError('Ingresa tu contraseña'); return; }
     setError(''); setLoading(true);
     try {
       const u = await login(email, password);
@@ -29,16 +33,12 @@ export default function LoginPage() {
         <div className="card-body" style={{ padding: '1.75rem' }}>
           <div className="eyebrow">Mi cuenta</div>
           <h1 style={{ margin: '0.3rem 0 0.5rem' }}>Ingresar</h1>
-          <p className="text-muted">
-            Autenticación OAuth2 (equivalente al Authorization Server del Booking Hub central).
-            El token JWT recibido incluye los scopes autos:read, autos:book y autos:cancel.
-          </p>
-          <form onSubmit={submit}>
+          <form onSubmit={submit} noValidate>
             {error && <div className="alert alert-danger">{error}</div>}
             <div className="form-group">
               <label className="form-label" htmlFor="login-email">Correo electrónico</label>
               <input id="login-email" type="email" className="form-control" required autoComplete="username"
-                value={email} onChange={(e) => setEmail(e.target.value)} />
+                value={email} onChange={(e) => setEmail(filtrarEmail(e.target.value))} maxLength={160} />
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="login-pass">Contraseña</label>

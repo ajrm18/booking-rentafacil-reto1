@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { catalog, orders } from '../api';
+import { account, catalog, orders } from '../api';
+import { filtrarEmail, filtrarNombre, filtrarTelefono, msgEmail, msgNombre, msgTelefono, sinErrores } from '../utils/validaciones';
 import type { OrderPreviewResponse, VehicleDetail } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { PHOTO_CREDITS } from '../data/photoCredits';
@@ -57,11 +58,32 @@ export default function VehiculoDetallePage() {
     }).catch(() => {});
   }, [id]);
 
+  // Autollenado: los datos del conductor se toman del perfil del usuario (siguen siendo editables).
+  // Solo se completan los campos vacíos, para no pisar lo que el usuario ya haya escrito.
+  const [autollenado, setAutollenado] = useState(false);
   useEffect(() => {
-    if (user && !driver.email) {
-      setDriver({ ...driver, email: user.email });
-    }
+    if (!user) return;
+    account.profile().then((p) => {
+      setDriver((d) => ({
+        first_name: d.first_name || p.first_name || '',
+        last_name: d.last_name || p.last_name || '',
+        email: d.email || p.email || user.email,
+        phone_number: d.phone_number || p.phone || '',
+      }));
+      setAutollenado(true);
+    }).catch(() => setDriver((d) => ({ ...d, email: d.email || user.email })));
   }, [user]);
+
+  // Validación del formulario del conductor (mismas reglas que el backend)
+  const errDriver = {
+    first_name: msgNombre(driver.first_name, 'El nombre'),
+    last_name: msgNombre(driver.last_name, 'El apellido'),
+    email: msgEmail(driver.email),
+    phone_number: msgTelefono(driver.phone_number),
+  };
+  const driverValido = sinErrores(errDriver);
+  const [tocado, setTocado] = useState<Record<string, boolean>>({});
+  const tocar = (k: string) => setTocado((t) => ({ ...t, [k]: true }));
 
   const imagenes = (v?.images && v.images.length > 0) ? v.images : [v?.main_image_url || ''];
 
@@ -105,7 +127,11 @@ export default function VehiculoDetallePage() {
   };
 
   /** "Confirmar reserva" abre el simulador de pago; la orden se crea al pagar. */
-  const abrirPago = () => { setError(''); setStep('payment'); };
+  const abrirPago = () => {
+    setTocado({ first_name: true, last_name: true, email: true, phone_number: true });
+    if (!driverValido) return;
+    setError(''); setStep('payment');
+  };
 
   /** Llamado por el simulador con un payment_reference valido. Si falla, el modal muestra el error. */
   const pagarYCrear = async (paymentReference: string) => {
@@ -290,28 +316,45 @@ export default function VehiculoDetallePage() {
                     </div>
                   </div>
 
+                  {autollenado && (
+                    <div className="text-muted" style={{ fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                      Datos tomados de tu cuenta; puedes editarlos si reservas para otra persona.
+                    </div>
+                  )}
                   <div className="form-group">
-                    <label className="form-label">Nombre</label>
-                    <input className="form-control" required value={driver.first_name}
-                      onChange={(e) => setDriver({ ...driver, first_name: e.target.value })} />
+                    <label className="form-label" htmlFor="drv-first_name">Nombre *</label>
+                    <input id="drv-first_name" className="form-control" value={driver.first_name}
+                      onBlur={() => tocar('first_name')}
+                      aria-invalid={tocado.first_name && !!errDriver.first_name} aria-describedby={tocado.first_name && errDriver.first_name ? 'drv-first_name-err' : undefined} autoComplete="given-name" maxLength={60}
+                      onChange={(e) => setDriver({ ...driver, first_name: filtrarNombre(e.target.value) })} />
+                    <FechaError id="drv-first_name-err" mensaje={tocado.first_name ? errDriver.first_name : undefined} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Apellido</label>
-                    <input className="form-control" required value={driver.last_name}
-                      onChange={(e) => setDriver({ ...driver, last_name: e.target.value })} />
+                    <label className="form-label" htmlFor="drv-last_name">Apellido *</label>
+                    <input id="drv-last_name" className="form-control" value={driver.last_name}
+                      onBlur={() => tocar('last_name')}
+                      aria-invalid={tocado.last_name && !!errDriver.last_name} aria-describedby={tocado.last_name && errDriver.last_name ? 'drv-last_name-err' : undefined} autoComplete="family-name" maxLength={60}
+                      onChange={(e) => setDriver({ ...driver, last_name: filtrarNombre(e.target.value) })} />
+                    <FechaError id="drv-last_name-err" mensaje={tocado.last_name ? errDriver.last_name : undefined} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Correo electrónico</label>
-                    <input type="email" className="form-control" required value={driver.email}
-                      onChange={(e) => setDriver({ ...driver, email: e.target.value })} />
+                    <label className="form-label" htmlFor="drv-email">Correo electrónico *</label>
+                    <input type="email" id="drv-email" className="form-control" value={driver.email}
+                      onBlur={() => tocar('email')}
+                      aria-invalid={tocado.email && !!errDriver.email} aria-describedby={tocado.email && errDriver.email ? 'drv-email-err' : undefined} autoComplete="email" maxLength={160}
+                      onChange={(e) => setDriver({ ...driver, email: filtrarEmail(e.target.value) })} />
+                    <FechaError id="drv-email-err" mensaje={tocado.email ? errDriver.email : undefined} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Teléfono</label>
-                    <input className="form-control" value={driver.phone_number}
-                      onChange={(e) => setDriver({ ...driver, phone_number: e.target.value })} />
+                    <label className="form-label" htmlFor="drv-phone_number">Teléfono</label>
+                    <input type="tel" inputMode="tel" placeholder="0983563584" id="drv-phone_number" className="form-control" value={driver.phone_number}
+                      onBlur={() => tocar('phone_number')}
+                      aria-invalid={tocado.phone_number && !!errDriver.phone_number} aria-describedby={tocado.phone_number && errDriver.phone_number ? 'drv-phone_number-err' : undefined} autoComplete="tel" maxLength={20}
+                      onChange={(e) => setDriver({ ...driver, phone_number: filtrarTelefono(e.target.value) })} />
+                    <FechaError id="drv-phone_number-err" mensaje={tocado.phone_number ? errDriver.phone_number : undefined} />
                   </div>
                   <button className="btn btn-primary btn-block" onClick={abrirPago}
-                    disabled={step !== 'preview' || !driver.first_name || !driver.last_name || !driver.email}>
+                    disabled={step !== 'preview'}>
                     Confirmar reserva
                   </button>
                   <button className="btn btn-outline btn-block mt-1" onClick={() => setStep('form')}>

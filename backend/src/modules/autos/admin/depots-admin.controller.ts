@@ -7,6 +7,7 @@ import { Repository } from 'typeorm';
 import { Depot } from '../entities/depot.entity';
 import { WebhookDispatcher } from '../webhook-dispatcher.service';
 import { AdminApi, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
+import { validarAgencia } from './admin-validaciones';
 
 /** API de la tabla `depots`. Cada cambio emite el evento de webhook DEPOT_UPDATE. */
 @AdminApi('Admin - Depots')
@@ -34,6 +35,7 @@ export class DepotsAdminController {
   async create(@Body() body: Partial<Depot>) {
     requireFields(body, ['name', 'city']);
     const { depot_id: _id, vehicles: _v, ...campos } = body;
+    validarAgencia(campos);
     const saved = await this.depots.save(this.depots.create(campos));
     this.notify(saved, 'CREATED');
     return saved;
@@ -44,6 +46,7 @@ export class DepotsAdminController {
   async update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<Depot>) {
     const d = await findOr404(this.depots, { depot_id: id }, 'Agencia', id);
     const { depot_id: _id, vehicles: _v, ...campos } = body;
+    validarAgencia(campos);
     Object.assign(d, campos);
     const saved = await this.depots.save(d);
     this.notify(saved, 'UPDATED');

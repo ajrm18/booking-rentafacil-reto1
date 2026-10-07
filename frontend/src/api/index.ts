@@ -77,6 +77,8 @@ export const admin = {
 /** Cuenta del usuario autenticado (fuera del contrato): sus órdenes por `sub` del token. */
 export const account = {
   myOrders: () => api.get<OrderDetail[]>('/account/orders').then((r) => r.data),
+  /** Datos del usuario para autollenar el formulario del conductor. */
+  profile: () => api.get<{ first_name: string; last_name: string; email: string; phone: string | null }>('/account/profile').then((r) => r.data),
 };
 
 /** Usuarios (tabla users): el admin crea, edita y elimina clientes. */

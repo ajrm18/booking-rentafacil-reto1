@@ -4,10 +4,12 @@ import { adminUsers } from '../api';
 import type { AdminUser, AdminUserInput } from '../types';
 import { useAuth } from '../context/AuthContext';
 import Modal from '../components/Modal';
+import {
+  filtrarDigitos, filtrarEmail, filtrarNombre, filtrarTelefono, msgCedula, msgEmail, msgNombre, msgTelefono,
+} from '../utils/validaciones';
 
 const ROLES: Record<AdminUser['role'], string> = { client: 'Cliente', admin: 'Administrador' };
 const MIN_PASSWORD = 8;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const vacio = { first_name: '', last_name: '', email: '', phone: '', national_id: '', role: 'client' as AdminUser['role'], password: '' };
 type Form = typeof vacio;
@@ -73,12 +75,16 @@ export default function UsuariosAdmin() {
 
   const validar = (): Errores => {
     const e: Errores = {};
-    if (form.first_name.trim().length < 2) e.first_name = 'El nombre es obligatorio (mínimo 2 caracteres)';
-    if (form.last_name.trim().length < 2) e.last_name = 'El apellido es obligatorio (mínimo 2 caracteres)';
-    if (!EMAIL_RE.test(form.email.trim())) e.email = 'Ingresa un correo electrónico válido';
-    if (form.national_id && !/^\d{10}$/.test(form.national_id.trim())) e.national_id = 'La cédula debe tener 10 dígitos';
+    e.first_name = msgNombre(form.first_name, 'El nombre');
+    e.last_name = msgNombre(form.last_name, 'El apellido');
+    e.email = msgEmail(form.email);
+    e.phone = msgTelefono(form.phone);
+    e.national_id = msgCedula(form.national_id);
     if (!editando && form.password.length < MIN_PASSWORD) e.password = `La contraseña debe tener al menos ${MIN_PASSWORD} caracteres`;
     if (editando && form.password && form.password.length < MIN_PASSWORD) e.password = `La contraseña debe tener al menos ${MIN_PASSWORD} caracteres`;
+    if (form.password.length > 72) e.password = 'La contraseña no puede superar los 72 caracteres';
+    // Solo se conservan las claves con error (Object.keys(e).length decide si se envía)
+    (Object.keys(e) as (keyof Errores)[]).forEach((k) => { if (!e[k]) delete e[k]; });
     return e;
   };
 
@@ -184,13 +190,13 @@ export default function UsuariosAdmin() {
             <form onSubmit={guardar} noValidate>
               {errorApi && <div className="alert alert-danger" role="alert">{errorApi}</div>}
               <div className="usr-row">
-                {campo('first_name', 'Nombre *', <input {...attrs('first_name')} autoComplete="off" value={form.first_name} onChange={(e) => set('first_name', e.target.value)} />)}
-                {campo('last_name', 'Apellido *', <input {...attrs('last_name')} autoComplete="off" value={form.last_name} onChange={(e) => set('last_name', e.target.value)} />)}
+                {campo('first_name', 'Nombre *', <input {...attrs('first_name')} autoComplete="off" maxLength={60} value={form.first_name} onChange={(e) => set('first_name', filtrarNombre(e.target.value))} />)}
+                {campo('last_name', 'Apellido *', <input {...attrs('last_name')} autoComplete="off" maxLength={60} value={form.last_name} onChange={(e) => set('last_name', filtrarNombre(e.target.value))} />)}
               </div>
-              {campo('email', 'Correo electrónico *', <input {...attrs('email')} type="email" autoComplete="off" value={form.email} onChange={(e) => set('email', e.target.value)} />)}
+              {campo('email', 'Correo electrónico *', <input {...attrs('email')} type="email" autoComplete="off" maxLength={160} value={form.email} onChange={(e) => set('email', filtrarEmail(e.target.value))} />)}
               <div className="usr-row">
-                {campo('phone', 'Teléfono', <input {...attrs('phone')} inputMode="tel" placeholder="+593 99 000 0000" value={form.phone} onChange={(e) => set('phone', e.target.value)} />)}
-                {campo('national_id', 'Cédula', <input {...attrs('national_id')} inputMode="numeric" placeholder="10 dígitos" value={form.national_id} onChange={(e) => set('national_id', e.target.value.replace(/\D/g, '').slice(0, 10))} />)}
+                {campo('phone', 'Teléfono', <input {...attrs('phone')} type="tel" inputMode="tel" placeholder="0983563584" maxLength={20} value={form.phone} onChange={(e) => set('phone', filtrarTelefono(e.target.value))} />)}
+                {campo('national_id', 'Cédula', <input {...attrs('national_id')} inputMode="numeric" placeholder="10 dígitos" value={form.national_id} onChange={(e) => set('national_id', filtrarDigitos(e.target.value, 10))} />)}
               </div>
               {campo('role', 'Rol', (
                 <select {...attrs('role')} value={form.role} onChange={(e) => set('role', e.target.value)}>
@@ -201,7 +207,7 @@ export default function UsuariosAdmin() {
               {campo('password', editando ? 'Nueva contraseña' : 'Contraseña *', (
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <input {...attrs('password')} type={verPassword ? 'text' : 'password'} autoComplete="new-password"
-                    value={form.password} onChange={(e) => set('password', e.target.value)} />
+                    maxLength={72} value={form.password} onChange={(e) => set('password', e.target.value)} />
                   <button type="button" className="btn btn-outline btn-sm" onClick={() => setVerPassword((v) => !v)}
                     aria-pressed={verPassword} disabled={guardando}>{verPassword ? 'Ocultar' : 'Mostrar'}</button>
                 </div>

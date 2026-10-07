@@ -8,9 +8,8 @@ import { Request } from 'express';
 import { Repository } from 'typeorm';
 import { hashPassword } from '../../../common/password';
 import { User, UserRole } from '../entities/user.entity';
+import { cedulaValida, EMAIL_RE, NOMBRE_RE, telefonoValido } from '../../../common/validaciones';
 import { AdminApi, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const ROLES: UserRole[] = ['client', 'admin'];
 const MIN_PASSWORD = 8;
 
@@ -95,14 +94,16 @@ export class UsersAdminController {
     const out: Partial<User> = {};
     for (const k of ['first_name', 'last_name'] as const) {
       if (body[k] !== undefined) {
-        const v = String(body[k]).trim();
-        if (v.length < 2) throw invalid(k, 'Debe tener al menos 2 caracteres');
+        const v = String(body[k]).trim().replace(/\s+/g, ' ');
+        if (v.length < 2) throw invalid(k, 'Debe tener al menos 2 letras');
+        if (v.length > 60) throw invalid(k, 'No puede superar los 60 caracteres');
+        if (!NOMBRE_RE.test(v)) throw invalid(k, 'Solo puede contener letras');
         out[k] = v;
       }
     }
     if (body.email !== undefined) {
       const email = String(body.email).trim().toLowerCase();
-      if (!EMAIL_RE.test(email)) throw invalid('email', 'Correo electrónico inválido');
+      if (!EMAIL_RE.test(email)) throw invalid('email', 'Correo electrónico inválido (debe tener una sola @ y un dominio)');
       const dup = await this.users.findOne({ where: { email } });
       if (dup && dup.user_id !== id) throw invalid('email', 'Ya existe un usuario con ese correo');
       out.email = email;
@@ -111,13 +112,24 @@ export class UsersAdminController {
       if (!ROLES.includes(body.role)) throw invalid('role', 'El rol debe ser client o admin');
       out.role = body.role;
     }
-    if (body.password !== undefined && body.password !== '' && String(body.password).length < MIN_PASSWORD) {
-      throw invalid('password', `La contraseña debe tener al menos ${MIN_PASSWORD} caracteres`);
+    if (body.password !== undefined && body.password !== '') {
+      const len = String(body.password).length;
+      if (len < MIN_PASSWORD) throw invalid('password', `La contraseña debe tener al menos ${MIN_PASSWORD} caracteres`);
+      if (len > 72) throw invalid('password', 'La contraseña no puede superar los 72 caracteres');
     }
-    if (body.phone !== undefined) out.phone = body.phone ? String(body.phone).trim() : null;
+    if (body.phone !== undefined) {
+      const tel = body.phone ? String(body.phone).trim() : null;
+      if (tel && !telefonoValido(tel)) throw invalid('phone', 'El teléfono solo admite números (9 a 15 dígitos, "+" opcional al inicio)');
+      out.phone = tel;
+    }
     if (body.national_id !== undefined) {
       const ced = body.national_id ? String(body.national_id).trim() : null;
       if (ced && !/^\d{10}$/.test(ced)) throw invalid('national_id', 'La cédula debe tener 10 dígitos');
+      if (ced && !cedulaValida(ced)) throw invalid('national_id', 'La cédula no es válida');
+      if (ced) {
+        const dupCed = await this.users.findOne({ where: { national_id: ced } });
+        if (dupCed && dupCed.user_id !== id) throw invalid('national_id', 'Ya existe un usuario con esa cédula');
+      }
       out.national_id = ced;
     }
     return out;

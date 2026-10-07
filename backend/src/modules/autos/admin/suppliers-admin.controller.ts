@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Supplier } from '../entities/supplier.entity';
 import { AdminApi, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
+import { validarProveedor } from './admin-validaciones';
 
 /** API de la tabla `suppliers`. */
 @AdminApi('Admin - Suppliers')
@@ -30,6 +31,7 @@ export class SuppliersAdminController {
   create(@Body() body: Partial<Supplier>) {
     requireFields(body, ['name']);
     const { supplier_id: _id, vehicles: _v, ...campos } = body;
+    validarProveedor(campos);
     return this.suppliers.save(this.suppliers.create(campos));
   }
 
@@ -38,6 +40,7 @@ export class SuppliersAdminController {
   async update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<Supplier>) {
     const s = await findOr404(this.suppliers, { supplier_id: id }, 'Proveedor', id);
     const { supplier_id: _id, vehicles: _v, ...campos } = body;
+    validarProveedor(campos);
     Object.assign(s, campos);
     return this.suppliers.save(s);
   }

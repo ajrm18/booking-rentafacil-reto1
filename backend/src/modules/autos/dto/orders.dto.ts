@@ -1,9 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayNotEmpty, IsArray, IsEmail, IsIn, IsOptional, IsString, IsUrl, IsUUID, ValidateNested,
+  ArrayNotEmpty, IsArray, IsEmail, IsIn, IsOptional, IsString, IsUrl, IsUUID, Matches, MaxLength,
+  ValidateNested,
 } from 'class-validator';
 import { DriverDto, RouteDto } from './common-schemas.dto';
+import { EMAIL_RE, NOMBRE_RE, TELEFONO_RE } from '../../../common/validaciones';
 
 /** OrderHoldRequest */
 export class OrderHoldRequestDto {
@@ -74,20 +76,25 @@ export class OrderPreviewResponseDto {
 
 /** OrderCreateRequest */
 export class DriverDetailsDto {
+  // Mismo esquema del contrato (strings opcionales); solo se valida el formato del contenido.
   @ApiPropertyOptional({ example: 'Anthony' })
-  @IsOptional() @IsString()
+  @IsOptional() @IsString() @MaxLength(60)
+  @Matches(NOMBRE_RE, { message: 'first_name solo puede contener letras' })
   first_name?: string;
 
   @ApiPropertyOptional({ example: 'Rosero' })
-  @IsOptional() @IsString()
+  @IsOptional() @IsString() @MaxLength(60)
+  @Matches(NOMBRE_RE, { message: 'last_name solo puede contener letras' })
   last_name?: string;
 
   @ApiPropertyOptional({ example: 'anthony@example.com' })
-  @IsOptional() @IsEmail()
+  @IsOptional() @IsEmail({}, { message: 'email debe ser un correo válido con una sola @' })
+  @Matches(EMAIL_RE, { message: 'email debe ser un correo válido con una sola @' })
   email?: string;
 
   @ApiPropertyOptional({ example: '+593 99 000 0000' })
   @IsOptional() @IsString()
+  @Matches(TELEFONO_RE, { message: 'phone_number solo admite números (9 a 15 dígitos, "+" opcional al inicio)' })
   phone_number?: string;
 }
 

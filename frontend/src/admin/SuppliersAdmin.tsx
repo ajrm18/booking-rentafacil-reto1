@@ -41,7 +41,7 @@ export default function SuppliersAdmin() {
           <form onSubmit={submit}>
             <div className="form-group">
               <label className="form-label">Nombre</label>
-              <input className="form-control" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <input className="form-control" required minLength={2} maxLength={120} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div className="form-group">
               <label className="form-label">Marca</label>

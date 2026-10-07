@@ -195,8 +195,8 @@ async function sembrarUsuarios(ds: DataSource) {
   const repo = ds.getRepository(User);
   const demo = [
     { email: 'admin@rentafacil.ec', first_name: 'Anthony', last_name: 'Rosero', role: 'admin' as const, password: 'Admin12345' },
-    { email: 'maria@example.com', first_name: 'María', last_name: 'Pérez', role: 'client' as const, password: 'Cliente12345', phone: '+593 99 111 2233' },
-    { email: 'carlos@example.com', first_name: 'Carlos', last_name: 'Muñoz', role: 'client' as const, password: 'Cliente12345', phone: '+593 98 444 5566' },
+    { email: 'maria@example.com', first_name: 'María', last_name: 'Maldonado', role: 'client' as const, password: 'Cliente12345', phone: '0983563584' },
+    { email: 'carlos@example.com', first_name: 'Carlos', last_name: 'Muñoz', role: 'client' as const, password: 'Cliente12345', phone: '0984445566' },
   ];
   let creados = 0;
   for (const u of demo) {
@@ -206,6 +206,17 @@ async function sembrarUsuarios(ds: DataSource) {
     creados++;
   }
   if (creados) console.log(`  ${creados} usuarios demo creados`);
+
+  // Perfiles demo sembrados antes con otros datos: se actualizan solo si siguen intactos
+  // (no se pisa lo que el admin haya editado desde /admin/usuarios).
+  const actualizaciones: Array<[string, Record<string, string>, Record<string, string>]> = [
+    ['maria@example.com', { last_name: 'Pérez', phone: '+593 99 111 2233' }, { last_name: 'Maldonado', phone: '0983563584' }],
+    ['carlos@example.com', { phone: '+593 98 444 5566' }, { phone: '0984445566' }],
+  ];
+  for (const [email, antes, despues] of actualizaciones) {
+    const r = await repo.update({ email, ...antes }, despues);
+    if (r.affected) console.log(`  perfil demo actualizado: ${email}`);
+  }
 }
 
 /**

@@ -142,8 +142,8 @@ npm run seed
 
 **Cuentas demo (JWT):**
 - Admin: `admin@rentafacil.ec` / `Admin12345` → scopes: `autos:read autos:book autos:cancel autos:webhooks`
-- Cliente: `maria@example.com` / `Cliente12345` → scopes: `autos:read autos:book autos:cancel`
-- Cliente: `carlos@example.com` / `Cliente12345`
+- Cliente: `maria@example.com` / `Cliente12345` (María Maldonado, 0983563584) → scopes: `autos:read autos:book autos:cancel`
+- Cliente: `carlos@example.com` / `Cliente12345` (Carlos Muñoz, 0984445566)
 
 El administrador puede crear más clientes desde **Admin → Usuarios → + Nuevo cliente**.
 
@@ -257,6 +257,8 @@ Los nombres de tablas, columnas y campos de la API se mantienen en inglés porqu
 - [x] Simulador de pagos antes de `/orders/create` (Luhn, MM/AA, CVV; tarjeta de prueba `4111 1111 1111 1111`, `12/30`, CVV `123`). Prueba E2E de UI: `cd frontend && npm run e2e:ui [URL]`
 - [x] Validación de fechas en frontend (mensajes en línea) y backend (inicio no pasado, fin posterior, máximo 90 días)
 - [x] Gestión de usuarios: el admin crea clientes con contraseña generada y copia sus credenciales
+- [x] Validación de todos los formularios en frontend y backend (nombres solo letras, correo con una sola @, teléfono solo números, cédula con dígito verificador, rangos en vehículos y agencias)
+- [x] Autollenado de los datos del conductor desde el perfil del cliente (editables)
 - [x] Ortografía española completa (tildes y ñ) en todo lo que ve el usuario
 - [x] Cumplimiento 1:1 con `contracts/autos-openapi.yaml`
 - [x] Headers requeridos: `X-Affiliate-Id`, `Idempotency-Key`

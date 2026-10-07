@@ -1,10 +1,13 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query,
+  BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Vehicle } from '../entities/vehicle.entity';
+import { Depot } from '../entities/depot.entity';
+import { Supplier } from '../entities/supplier.entity';
+import { referenciaInexistente, validarVehiculo } from './admin-validaciones';
 import { VehicleImage } from '../entities/vehicle-image.entity';
 import { AdminApi, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
 
@@ -15,7 +18,37 @@ export class VehiclesAdminController {
   constructor(
     @InjectRepository(Vehicle) private readonly vehicles: Repository<Vehicle>,
     @InjectRepository(VehicleImage) private readonly images: Repository<VehicleImage>,
+    @InjectRepository(Depot) private readonly depots: Repository<Depot>,
+    @InjectRepository(Supplier) private readonly suppliers: Repository<Supplier>,
   ) {}
+
+  /** Formato de cada campo, agencia/proveedor existentes y placa única (400 en vez de 500 de la BD). */
+  private async validar(body: Partial<Vehicle>, id?: string) {
+    validarVehiculo(body);
+    if (body.depot_id !== undefined && !(await this.depots.exist({ where: { depot_id: body.depot_id } }))) {
+      throw referenciaInexistente('depot_id', 'La agencia');
+    }
+    if (body.supplier_id !== undefined && !(await this.suppliers.exist({ where: { supplier_id: body.supplier_id } }))) {
+      throw referenciaInexistente('supplier_id', 'El proveedor');
+    }
+    if (body.plate) {
+      const otro = await this.vehicles.findOne({ where: { plate: body.plate } });
+      if (otro && otro.vehicle_id !== id) {
+        throw new BadRequestException({
+          type: 'https://api.booking-hub.com/errors/validation-failed', title: 'Petición inválida', status: 400,
+          code: 'VALIDATION_FAILED', detail: `Ya existe un vehículo con la placa ${body.plate}`,
+          invalidParams: [{ name: 'plate', reason: `Ya existe un vehículo con la placa ${body.plate}` }],
+        });
+      }
+    }
+    if (!id && body.vehicle_id && (await this.vehicles.exist({ where: { vehicle_id: body.vehicle_id } }))) {
+      throw new BadRequestException({
+        type: 'https://api.booking-hub.com/errors/validation-failed', title: 'Petición inválida', status: 400,
+        code: 'VALIDATION_FAILED', detail: `Ya existe un vehículo con el ID ${body.vehicle_id}`,
+        invalidParams: [{ name: 'vehicle_id', reason: `Ya existe un vehículo con el ID ${body.vehicle_id}` }],
+      });
+    }
+  }
 
   @Get()
   @ApiOperation({ summary: 'Listar todos los vehiculos del inventario' })
@@ -36,9 +69,10 @@ export class VehiclesAdminController {
 
   @Post()
   @ApiOperation({ summary: 'Crear un vehiculo' })
-  create(@Body() body: Partial<Vehicle>) {
+  async create(@Body() body: Partial<Vehicle>) {
     requireFields(body, ['make', 'model', 'year', 'plate', 'price_per_day', 'depot_id', 'supplier_id']);
     if (!body.vehicle_id) body.vehicle_id = `VEH-${Date.now()}`;
+    await this.validar(body);
     return this.vehicles.save(this.vehicles.create(body));
   }
 
@@ -49,6 +83,9 @@ export class VehiclesAdminController {
     @Body() body: Partial<Vehicle> & { gallery?: string[] },
   ) {
     const v = await findOr404(this.vehicles, { vehicle_id: id }, 'Vehiculo', id);
+    const { vehicle_id: _ignorado, ...editable } = body;
+    await this.validar(editable, id);
+    Object.assign(body, editable);
     // La galeria se gestiona aparte: `gallery` reemplaza todas las fotos; si solo cambia
     // main_image_url se actualiza la foto principal (posicion 0) para mantenerlas en sincronia.
     const { gallery, images: _images, vehicle_id: _id, ...campos } = body;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { admin } from '../api';
+import { filtrarNombre } from '../utils/validaciones';
 
 /** Etiquetas visibles; los valores (AVAILABLE, Sedan...) son los que guarda la API. */
 const ESTADOS_VEHICULO: Record<string, string> = {
@@ -77,15 +78,15 @@ export default function VehiculosAdmin() {
           }}>
             <F l="ID del vehículo (VEH-...)"><input className="form-control" required disabled={!!editId}
               value={form.vehicle_id} onChange={(e) => set('vehicle_id', e.target.value)} /></F>
-            <F l="Marca"><input className="form-control" required value={form.make} onChange={(e) => set('make', e.target.value)} /></F>
-            <F l="Modelo"><input className="form-control" required value={form.model} onChange={(e) => set('model', e.target.value)} /></F>
-            <F l="Año"><input type="number" className="form-control" required value={form.year} onChange={(e) => set('year', e.target.value)} /></F>
-            <F l="Placa"><input className="form-control" required value={form.plate} onChange={(e) => set('plate', e.target.value)} /></F>
-            <F l="Color"><input className="form-control" value={form.color || ''} onChange={(e) => set('color', e.target.value)} /></F>
-            <F l="Pasajeros"><input type="number" className="form-control" value={form.seats} onChange={(e) => set('seats', e.target.value)} /></F>
-            <F l="Puertas"><input type="number" className="form-control" value={form.doors} onChange={(e) => set('doors', e.target.value)} /></F>
-            <F l="Maletas"><input type="number" className="form-control" value={form.bag_capacity} onChange={(e) => set('bag_capacity', e.target.value)} /></F>
-            <F l="Precio por día"><input type="number" step="0.01" className="form-control" required value={form.price_per_day} onChange={(e) => set('price_per_day', e.target.value)} /></F>
+            <F l="Marca"><input className="form-control" required minLength={2} maxLength={60} value={form.make} onChange={(e) => set('make', e.target.value)} /></F>
+            <F l="Modelo"><input className="form-control" required maxLength={80} value={form.model} onChange={(e) => set('model', e.target.value)} /></F>
+            <F l="Año"><input type="number" className="form-control" required min={1990} max={new Date().getFullYear() + 1} value={form.year} onChange={(e) => set('year', e.target.value)} /></F>
+            <F l="Placa (ABC-1234)"><input className="form-control" required maxLength={8} pattern="[A-Z]{3}-[0-9]{3,4}" title="Formato ABC-1234" value={form.plate} onChange={(e) => set('plate', e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))} /></F>
+            <F l="Color"><input className="form-control" maxLength={30} value={form.color || ''} onChange={(e) => set('color', filtrarNombre(e.target.value))} /></F>
+            <F l="Pasajeros"><input type="number" className="form-control" required min={1} max={15} value={form.seats} onChange={(e) => set('seats', e.target.value)} /></F>
+            <F l="Puertas"><input type="number" className="form-control" required min={2} max={6} value={form.doors} onChange={(e) => set('doors', e.target.value)} /></F>
+            <F l="Maletas"><input type="number" className="form-control" required min={0} max={10} value={form.bag_capacity} onChange={(e) => set('bag_capacity', e.target.value)} /></F>
+            <F l="Precio por día"><input type="number" step="0.01" className="form-control" required min={0.01} max={10000} value={form.price_per_day} onChange={(e) => set('price_per_day', e.target.value)} /></F>
             <F l="Transmisión">
               <select className="form-control" value={form.transmission} onChange={(e) => set('transmission', e.target.value)}>
                 <option value="manual">Manual</option><option value="automatica">Automática</option>

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { filtrarNombre, msgNombre } from '../utils/validaciones';
 
 /**
  * Simulador de pago previo a POST /orders/create.
@@ -99,6 +100,7 @@ export default function PaymentSimulatorModal({ total, currency, onPay, onClose 
     if (digitos.length !== 16) err.numero = 'Debe tener 16 dígitos';
     else if (!luhnValido(digitos)) err.numero = 'Número de tarjeta inválido';
     if (titular.trim().length < 3) err.titular = 'Mínimo 3 caracteres';
+    else if (msgNombre(titular, 'El nombre del titular')) err.titular = msgNombre(titular, 'El nombre del titular');
     if (!/^\d{2}\/\d{2}$/.test(expiracion)) err.expiracion = 'Usa el formato MM/AA (ej. 12/30)';
     else if (Number(expiracion.slice(0, 2)) < 1 || Number(expiracion.slice(0, 2)) > 12) err.expiracion = 'El mes debe estar entre 01 y 12';
     else if (!expiracionValida(expiracion)) err.expiracion = 'La tarjeta está vencida';
@@ -158,9 +160,6 @@ export default function PaymentSimulatorModal({ total, currency, onPay, onClose 
           <div id={`${uid}-titulo`} className="eyebrow">Pago de la reserva</div>
           <div className="pay-total">Pagar ${total.toFixed(2)} {currency}</div>
 
-          <div className="pay-banner" role="note">
-            ⚠️ Modo simulador — ningún cargo real se procesa. Para pruebas use: 4111 1111 1111 1111 / 12/30 / CVV 123
-          </div>
           <button type="button" className="btn btn-outline btn-sm mb-2" onClick={usarPrueba} disabled={procesando}>
             Usar tarjeta de prueba
           </button>
@@ -171,7 +170,7 @@ export default function PaymentSimulatorModal({ total, currency, onPay, onClose 
               onChange={(e) => setNumero(mascaraTarjeta(e.target.value))} {...a11y('numero')} />)}
           {campo('titular', 'Nombre del titular',
             <input className="form-control" autoComplete="cc-name" placeholder="Como aparece en la tarjeta"
-              value={titular} onChange={(e) => setTitular(e.target.value)} {...a11y('titular')} />)}
+              value={titular} maxLength={60} onChange={(e) => setTitular(filtrarNombre(e.target.value).toUpperCase())} {...a11y('titular')} />)}
           <div className="pay-row">
             {campo('expiracion', 'Fecha de expiración',
               <input className="form-control" inputMode="numeric" autoComplete="cc-exp" placeholder="MM/AA"
@@ -206,10 +205,6 @@ export default function PaymentSimulatorModal({ total, currency, onPay, onClose 
         }
         .pay-dialog { width: 100%; max-width: 440px; box-shadow: var(--shadow-lg); margin: auto; }
         .pay-total { font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em; color: var(--strong); margin: 0.2rem 0 0.9rem; }
-        .pay-banner {
-          background: var(--warning-bg); color: var(--warning); border: 1px solid var(--brand-border);
-          border-radius: var(--radius-sm); padding: 0.65rem 0.8rem; font-size: 0.82rem; margin-bottom: 0.6rem;
-        }
         .pay-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
         .pay-err { color: var(--danger); font-size: 0.8rem; margin-top: 0.3rem; }
         .form-control[aria-invalid="true"] { border-color: var(--danger); }
