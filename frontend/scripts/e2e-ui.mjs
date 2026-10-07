@@ -62,7 +62,7 @@ try {
   await telefono.fill('');
   await telefono.pressSequentially('09abc835x63584');
   check('el teléfono no acepta letras', (await telefono.inputValue()) === '0983563584', await telefono.inputValue());
-  await nombre.fill(''); await nombre.pressSequentially('M4ría');
+  await nombre.fill(''); await nombre.pressSequentially('M4ar1ía');
   check('el nombre no acepta números', (await nombre.inputValue()) === 'María', await nombre.inputValue());
   await correo.fill(''); await correo.pressSequentially('maria@@example.com');
   check('el correo admite una sola @', (await correo.inputValue()) === 'maria@example.com', await correo.inputValue());
