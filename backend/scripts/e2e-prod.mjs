@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-const API = 'https://rentafacil-api.onrender.com/api/v1';
-const SWAGGER = 'https://rentafacil-api.onrender.com/api/docs';
-const FRONT = 'https://booking-rentafacil-reto1.vercel.app';
+// Por defecto producción; para probar en local: API_URL=http://localhost:3000 FRONT_URL=http://localhost:5173
+const ORIGEN = process.env.API_URL || 'https://rentafacil-api.onrender.com';
+const API = `${ORIGEN}/api/v1`;
+const SWAGGER = `${ORIGEN}/api/docs`;
+const FRONT = process.env.FRONT_URL || 'https://booking-rentafacil-reto1.vercel.app';
 
 const G = (s) => `\x1b[32m${s}\x1b[0m`, R = (s) => `\x1b[31m${s}\x1b[0m`;
 const ctx = {};
@@ -39,6 +41,26 @@ let r = await call('1', 'POST', '/auth/token', { body: { email: 'admin@rentafaci
 check('1 auth/token', [200, 201].includes(r.status) && r.json.access_token, r, `token obtenido (role=${r.json.user?.role})`);
 ctx.token = r.json.access_token;
 const auth = { Authorization: `Bearer ${ctx.token}` };
+
+// 1b. Registro público de clientes (fuera del contrato): entra directamente con rol client
+const cedula = (() => {
+  const base = '17' + Math.floor(Math.random() * 6) + String(Math.floor(Math.random() * 1e6)).padStart(6, '0');
+  const suma = [...base].reduce((s, d, i) => { let n = Number(d) * (i % 2 === 0 ? 2 : 1); if (n > 9) n -= 9; return s + n; }, 0);
+  return base + ((10 - (suma % 10)) % 10);
+})();
+const nuevo = { first_name: 'Cliente', last_name: 'Registro', email: `e2e.registro.${Date.now()}@test.com`, phone: '0983563584', national_id: cedula, password: 'Registro123' };
+r = await call('1b', 'POST', '/auth/register', { body: nuevo });
+check('1b auth/register', r.status === 201 && r.json.access_token && r.json.user?.role === 'client', r, `cliente ${r.json.user?.email} registrado (role=${r.json.user?.role})`);
+r = await call('1c', 'POST', '/auth/register', { body: { ...nuevo, national_id: '1710034065' } });
+check('1c register duplicado', r.status === 400 && r.json.invalidParams?.[0]?.name === 'email', r, 'correo repetido -> 400');
+r = await call('1d', 'POST', '/auth/register', { body: { ...nuevo, email: `x.${nuevo.email}`, role: 'admin' } });
+check('1d register como admin', r.status === 400, r, 'enviar role -> 400');
+r = await call('1e', 'POST', '/auth/token', { body: { email: nuevo.email, password: nuevo.password } });
+check('1e login del registrado', [200, 201].includes(r.status) && r.json.user?.role === 'client', r, 'la cuenta nueva inicia sesión');
+const usuarios = (await call('1f', 'GET', '/admin/users', { headers: auth })).json;
+const creado = usuarios.find((u) => u.email === nuevo.email);
+r = await call('1f', 'DELETE', `/admin/users/${creado?.user_id}`, { headers: auth });
+check('1f limpieza', r.status === 204, r, 'el admin elimina al cliente de prueba');
 
 // 2
 r = await call('2', 'POST', '/search', {
@@ -108,7 +130,7 @@ const frOk = fr.status === 200 && /<div id="root">/.test(frHtml);
 console.log((frOk ? G('✔') : R('❌')) + ` Frontend ${FRONT} -> ${fr.status}${frOk ? ' (index.html con #root)' : ''}`);
 if (!swOk || !frOk) process.exit(1);
 
-console.log('\n' + G('✅ TODO FUNCIONA EN PRODUCCIÓN - URLs listas para presentar'));
+console.log('\n' + G(process.env.API_URL ? '✅ TODO FUNCIONA (entorno local)' : '✅ TODO FUNCIONA EN PRODUCCIÓN - URLs listas para presentar'));
 console.log(G(`  Frontend: ${FRONT}`));
 console.log(G(`  API:      ${API}`));
 console.log(G(`  Swagger:  ${SWAGGER}`));

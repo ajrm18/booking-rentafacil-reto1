@@ -181,11 +181,14 @@ npm run dev
 
 ### 3.5. Pruebas automatizadas
 ```bash
-node backend/scripts/e2e-prod.mjs              # flujo completo del contrato contra producción
+node backend/scripts/e2e-prod.mjs              # registro + flujo completo del contrato contra producción
 cd frontend
 npm run e2e:ui [URL]                            # reserva + simulador de pagos en Chrome real
 node scripts/e2e-usuarios.mjs [URL]             # fechas, alta de cliente desde el admin y reserva del nuevo cliente
+node scripts/e2e-registro.mjs [URL]             # registro público: validaciones, duplicados, ingreso y volver al vehículo
 ```
+En local (backend en :3000, frontend en :5173, `npm run seed` al día):
+`API_URL=http://localhost:3000 FRONT_URL=http://localhost:5173 node backend/scripts/e2e-prod.mjs` y `[URL]` = `http://localhost:5173`.
 
 ---
 
