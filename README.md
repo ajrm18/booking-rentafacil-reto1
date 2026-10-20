@@ -68,6 +68,22 @@ Todos bajo prefijo `/api/v1` (equivalente al `servers.url` = `https://.../autos/
   Además `GET /api/v1/admin/stats` devuelve conteos de las 9 tablas, órdenes finalizadas e ingresos para el panel de control.
   Errores en formato Problem Details: `404` si el registro no existe, `400` si faltan campos
   obligatorios y `409` al eliminar un registro con dependencias (ej. una agencia con vehículos).
+- **Devolución de vehículos**: `POST /api/v1/admin/orders/{orderId}/return` (scopes `autos:webhooks` + `autos:book`).
+  No cancela la orden: sigue `CONFIRMED` y guarda `returned_at` / `returned_by_sub` (sub del JWT). El vehículo pasa a
+  `WASHING` durante 24 h (`vehicles.wash_until`): `/search` solo lo ofrece si la recogida es posterior a `wash_until`, y
+  vuelve solo a `AVAILABLE` al vencer (auto-sanado en cada `/search` y `/details`, sin cron). Idempotente; `404` si la
+  orden o el vehículo no existen y `409` si la orden no está `CONFIRMED`. En el panel: botón **Registrar retorno** y badge
+  **DEVUELTO el DD/MM/YYYY HH:mm**; en Vehículos, badge amarillo **En lavado** con la fecha de fin.
+
+## Contratos
+- `backend/contracts/autos-openapi.yaml` — contrato GDS Autos Core v1.0.0
+  (compartido por el profesor, implementado 1:1 por este backend).
+- `backend/contracts/rentafacil-ec-openapi.yaml` — contrato interno propio de
+  RentaFacil EC (APIs admin, auth y operacional). Autor: Anthony Rosero.
+- `/api/docs` — Swagger UI con la unión de ambos.
+- `/api/docs-json` — OpenAPI JSON generado desde el código.
+
+Validación de ambos YAML: `cd backend && npm run validate:contracts`.
 
 ---
 
@@ -77,6 +93,9 @@ Todos bajo prefijo `/api/v1` (equivalente al `servers.url` = `https://.../autos/
 booking-rentafacil/
 ├── backend/
 │   ├── contracts/autos-openapi.yaml    <- Contrato oficial (copia intacta)
+│   ├── contracts/rentafacil-ec-openapi.yaml <- Contrato interno propio (admin, auth, devoluciones)
+│   ├── scripts/validate-contracts.mjs  <- Valida ambos contratos (npm run validate:contracts)
+│   ├── test/                           <- Jest: unitarias (test/unit) y e2e HTTP (test/e2e)
 │   ├── scripts/e2e-prod.mjs            <- Prueba E2E contra producción
 │   ├── src/
 │   │   ├── main.ts                     Swagger, ValidationPipe, ProblemDetailsFilter
@@ -98,7 +117,7 @@ booking-rentafacil/
 │   │       └── seeds/seed.ts           (datos iniciales idempotentes)
 │   ├── package.json, Dockerfile, render.yaml
 ├── frontend/
-│   ├── scripts/                        (E2E de UI con Playwright: e2e-ui.mjs, e2e-usuarios.mjs)
+│   ├── scripts/                        (E2E de UI con Playwright: e2e-ui.mjs, e2e-usuarios.mjs, e2e-registro.mjs, e2e-retorno.mjs)
 │   ├── src/
 │   │   ├── api/                        (cliente HTTP con X-Affiliate-Id y Bearer)
 │   │   ├── types/                      (tipos alineados al contrato)
@@ -186,6 +205,16 @@ cd frontend
 npm run e2e:ui [URL]                            # reserva + simulador de pagos en Chrome real
 node scripts/e2e-usuarios.mjs [URL]             # fechas, alta de cliente desde el admin y reserva del nuevo cliente
 node scripts/e2e-registro.mjs [URL]             # registro público: validaciones, duplicados, ingreso y volver al vehículo
+node scripts/e2e-retorno.mjs [URL] [API]        # admin: Registrar retorno -> badge DEVUELTO -> vehículo En lavado
+```
+
+Pruebas Jest del backend (unitarias + e2e HTTP con supertest). Las que usan base de datos necesitan una BD
+desechable en `TEST_DATABASE_URL` (TypeORM `synchronize` crea las tablas); sin ella se omiten:
+```bash
+cd backend
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/rentafacil_test npm test
+npm run test:unit    # solo unitarias
+npm run test:e2e     # solo e2e
 ```
 En local (backend en :3000, frontend en :5173, `npm run seed` al día):
 `API_URL=http://localhost:3000 FRONT_URL=http://localhost:5173 node backend/scripts/e2e-prod.mjs` y `[URL]` = `http://localhost:5173`.
@@ -236,11 +265,11 @@ En local (backend en :3000, frontend en :5173, `npm run seed` al día):
 
 - **suppliers** (`supplier_id`, `name`, `brand`, `description`)
 - **depots** (`depot_id`, `name`, `city`, `address`, `airport`, `latitude`, `longitude`, `score`, `active`)
-- **vehicles** (`vehicle_id` string, `make`, `model`, `year`, `plate`, `seats`, `doors`, `bag_capacity`, `transmission`, `fuel_type`, `car_type`, `price_per_day`, `status`, `depot_id` FK, `supplier_id` FK)
+- **vehicles** (`vehicle_id` string, `make`, `model`, `year`, `plate`, `seats`, `doors`, `bag_capacity`, `transmission`, `fuel_type`, `car_type`, `price_per_day`, `status` (AVAILABLE, RESERVED, WASHING, MAINTENANCE, INACTIVE), `wash_until`, `depot_id` FK, `supplier_id` FK)
 - **vehicle_images** (`id`, `url`, `position`, `vehicle_id` FK)
 - **holds** (`hold_id`, `vehicle_id`, `search_token`, `status`, `expires_at`)
 - **order_previews** (`order_preview_id`, `vehicle_id`, `search_token`, `hold_id`, `extras`, `total_price`, `breakdown`, `expires_at`)
-- **orders** (`order_id` uuid, `locator`, `status`, `vehicle_id`, `owner_sub`, `vehicle_details`, `route_details`, `driver_details`, `extras`, `total_price`, `currency`, `idempotency_key`, `creation_date`)
+- **orders** (`order_id` uuid, `locator`, `status`, `vehicle_id`, `owner_sub`, `vehicle_details`, `route_details`, `driver_details`, `extras`, `total_price`, `currency`, `idempotency_key`, `returned_at`, `returned_by_sub`, `creation_date`)
 - **webhook_subscriptions** (`id` uuid, `url`, `events`, `secret`, `active`)
 - **users** (`user_id` uuid, `first_name`, `last_name`, `email` único, `password_hash` scrypt, `role` client/admin, `phone`, `national_id`, `created_at`)
 

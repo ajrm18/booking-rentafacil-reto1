@@ -2,26 +2,30 @@ import {
   Body, ConflictException, Controller, Delete, Get, HttpCode, Param,
   ParseUUIDPipe, Post, Put, Query, Req,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiBody, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery,
+} from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Request } from 'express';
 import { Repository } from 'typeorm';
 import { hashPassword } from '../../../common/password';
 import { User, UserRole } from '../entities/user.entity';
 import { invalid, ROLES, UserBody, validarUsuario } from '../user-validaciones';
-import { AdminApi, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
+import { AdminApi, ApiProblems, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
+import { UserAdminDto, UserAdminInputDto } from './admin-schemas.dto';
 
 /**
  * API de la tabla `users`: el admin crea clientes (o admins), los edita y los elimina.
  * Nunca devuelve password_hash (columna con select: false).
  */
-@AdminApi('Admin - Usuarios')
+@AdminApi('Admin - Users')
 @Controller('admin/users')
 export class UsersAdminController {
   constructor(@InjectRepository(User) private readonly users: Repository<User>) {}
 
   @Get()
   @ApiOperation({ summary: 'Listar usuarios' })
+  @ApiOkResponse({ type: [UserAdminDto] })
   @ApiQuery({ name: 'role', required: false, enum: ROLES })
   list(@Query('role') role?: UserRole) {
     return this.users.find({ where: role ? { role } : {}, order: { created_at: 'DESC' } });
@@ -29,12 +33,18 @@ export class UsersAdminController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Obtener un usuario' })
+  @ApiParam({ name: 'id', description: 'user_id (UUID)', format: 'uuid' })
+  @ApiOkResponse({ type: UserAdminDto })
+  @ApiProblems(404)
   get(@Param('id', ParseUUIDPipe) id: string) {
     return findOr404(this.users, { user_id: id }, 'Usuario', id);
   }
 
   @Post()
   @ApiOperation({ summary: 'Crear un usuario (cliente por defecto)' })
+  @ApiBody({ type: UserAdminInputDto })
+  @ApiCreatedResponse({ type: UserAdminDto })
+  @ApiProblems(400)
   async create(@Body() body: UserBody) {
     requireFields(body, ['first_name', 'last_name', 'email', 'password']);
     const datos = await this.validar(body);
@@ -45,6 +55,10 @@ export class UsersAdminController {
 
   @Put(':id')
   @ApiOperation({ summary: 'Actualizar un usuario (nombre, email, rol, teléfono y, opcionalmente, contraseña)' })
+  @ApiParam({ name: 'id', description: 'user_id (UUID)', format: 'uuid' })
+  @ApiBody({ type: UserAdminInputDto, description: 'Campos a modificar (parcial)' })
+  @ApiOkResponse({ type: UserAdminDto })
+  @ApiProblems(400, 404)
   async update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UserBody, @Req() req: Request) {
     const user = await findOr404(this.users, { user_id: id }, 'Usuario', id);
     const datos = await this.validar(body, id);
@@ -61,6 +75,9 @@ export class UsersAdminController {
   @Delete(':id')
   @HttpCode(204)
   @ApiOperation({ summary: 'Eliminar un usuario' })
+  @ApiParam({ name: 'id', description: 'user_id (UUID)', format: 'uuid' })
+  @ApiNoContentResponse({ description: 'Eliminado' })
+  @ApiProblems(404, 409)
   async remove(@Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
     const user = await findOr404(this.users, { user_id: id }, 'Usuario', id);
     if (user.email === (req as any).auth?.sub) {

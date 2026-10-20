@@ -12,7 +12,11 @@
     "start:prod": "node dist/main",
     "seed": "ts-node -r tsconfig-paths/register src/modules/autos/seeds/seed.ts",
     "seed:prod": "node dist/modules/autos/seeds/seed.js",
-    "start:render": "node dist/modules/autos/seeds/seed.js && node dist/main.js"
+    "start:render": "node dist/modules/autos/seeds/seed.js && node dist/main.js",
+    "test": "jest --runInBand",
+    "test:unit": "jest --runInBand --selectProjects unit",
+    "test:e2e": "jest --runInBand --selectProjects e2e",
+    "validate:contracts": "node scripts/validate-contracts.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
@@ -30,10 +34,17 @@
     "typeorm": "^0.3.19"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^10.1.1",
     "@nestjs/cli": "^10.2.1",
     "@nestjs/schematics": "^10.0.3",
+    "@nestjs/testing": "^10.4.22",
     "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.14",
     "@types/node": "^20.10.5",
+    "@types/supertest": "^6.0.2",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
     "ts-loader": "^9.5.1",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
@@ -41,5 +52,34 @@
   },
   "engines": {
     "node": "22.x"
+  },
+  "jest": {
+    "projects": [
+      {
+        "displayName": "unit",
+        "preset": "ts-jest",
+        "testEnvironment": "node",
+        "rootDir": ".",
+        "testMatch": [
+          "<rootDir>/test/unit/**/*.spec.ts"
+        ],
+        "setupFiles": [
+          "<rootDir>/test/setup-env.ts"
+        ]
+      },
+      {
+        "displayName": "e2e",
+        "preset": "ts-jest",
+        "testEnvironment": "node",
+        "rootDir": ".",
+        "testMatch": [
+          "<rootDir>/test/e2e/**/*.e2e-spec.ts"
+        ],
+        "setupFiles": [
+          "<rootDir>/test/setup-env.ts"
+        ]
+      }
+    ],
+    "testTimeout": 60000
   }
 }

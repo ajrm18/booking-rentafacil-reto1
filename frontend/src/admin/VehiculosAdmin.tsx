@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { admin } from '../api';
 import { filtrarNombre } from '../utils/validaciones';
+import { fechaHora } from '../utils/reservas';
 
 /** Etiquetas visibles; los valores (AVAILABLE, Sedan...) son los que guarda la API. */
 const ESTADOS_VEHICULO: Record<string, string> = {
-  AVAILABLE: 'Disponible', RESERVED: 'Reservado', MAINTENANCE: 'En mantenimiento', INACTIVE: 'Inactivo',
+  AVAILABLE: 'Disponible', RESERVED: 'Reservado', WASHING: 'En lavado', MAINTENANCE: 'En mantenimiento', INACTIVE: 'Inactivo',
+};
+const BADGE_ESTADO: Record<string, string> = {
+  AVAILABLE: 'badge-success', RESERVED: 'badge-muted', WASHING: 'badge-warning', MAINTENANCE: 'badge-danger', INACTIVE: 'badge-muted',
 };
 const ETIQUETA_CATEGORIA_ADMIN: Record<string, string> = { Sedan: 'Sedán' };
 
@@ -153,7 +157,12 @@ export default function VehiculosAdmin() {
                 <td>{ETIQUETA_CATEGORIA_ADMIN[v.car_type] || v.car_type}</td>
                 <td>{v.depot?.name || '-'}</td>
                 <td>${Number(v.price_per_day).toFixed(2)}</td>
-                <td><span className="badge">{ESTADOS_VEHICULO[v.status] || v.status}</span></td>
+                <td>
+                  <span className={`badge ${BADGE_ESTADO[v.status] ?? ''}`}>{ESTADOS_VEHICULO[v.status] || v.status}</span>
+                  {v.status === 'WASHING' && v.wash_until && (
+                    <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: 4 }}>hasta {fechaHora(v.wash_until)}</div>
+                  )}
+                </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <button className="btn btn-outline btn-sm" onClick={() => abrirEditar(v)}>Editar</button>{' '}
                   <button className="btn btn-danger btn-sm" onClick={() => eliminar(v.vehicle_id)}>Eliminar</button>

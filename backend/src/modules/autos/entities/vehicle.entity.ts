@@ -8,6 +8,16 @@ import { Supplier } from './supplier.entity';
 import { VehicleImage } from './vehicle-image.entity';
 
 /**
+ * Estados de vehicles.status. RESERVED es el "rentado" (RENTED) del dominio: lo pone /orders/create
+ * y lo libera /orders/{id}/cancel o la devolucion (POST /admin/orders/{id}/return -> WASHING).
+ */
+export const VEHICLE_STATUSES = ['AVAILABLE', 'RESERVED', 'WASHING', 'MAINTENANCE', 'INACTIVE'] as const;
+export type VehicleStatus = typeof VEHICLE_STATUSES[number];
+
+/** Horas que un vehiculo queda en lavado despues de devolverse. */
+export const WASH_HOURS = 24;
+
+/**
  * Inventario de vehiculos. Su vehicle_id es un string (Ej: VEH-1001) para respetar el
  * contrato components.schemas.CarSearchResponse.data.items.vehicle_id (type: string).
  */
@@ -61,8 +71,16 @@ export class Vehicle {
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'main_image_url' })
   main_image_url: string;
 
+  /**
+   * Estado operativo (columna varchar, valores en VEHICLE_STATUSES). WASHING = lavado tras la
+   * devolucion; vuelve a AVAILABLE cuando vence wash_until.
+   */
   @Column({ type: 'varchar', length: 20, default: 'AVAILABLE' })
   status: string;
+
+  /** Fin del lavado post-devolucion (solo con status WASHING). */
+  @Column({ type: 'timestamptz', nullable: true, name: 'wash_until' })
+  wash_until: Date | null;
 
   @ManyToOne(() => Depot, (d) => d.vehicles, { eager: true })
   @JoinColumn({ name: 'depot_id' })

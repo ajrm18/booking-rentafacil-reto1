@@ -1,18 +1,21 @@
 import {
   BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiBody, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery,
+} from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Vehicle } from '../entities/vehicle.entity';
+import { Vehicle, VEHICLE_STATUSES } from '../entities/vehicle.entity';
 import { Depot } from '../entities/depot.entity';
 import { Supplier } from '../entities/supplier.entity';
 import { referenciaInexistente, validarVehiculo } from './admin-validaciones';
 import { VehicleImage } from '../entities/vehicle-image.entity';
-import { AdminApi, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
+import { AdminApi, ApiProblems, deleteOr404, findOr404, requireFields } from './admin-api.helpers';
+import { VehicleAdminDto } from './admin-schemas.dto';
 
 /** API de la tabla `vehicles`. */
-@AdminApi('Admin - Vehiculos')
+@AdminApi('Admin - Vehicles')
 @Controller('admin/vehicles')
 export class VehiclesAdminController {
   constructor(
@@ -52,7 +55,8 @@ export class VehiclesAdminController {
 
   @Get()
   @ApiOperation({ summary: 'Listar todos los vehiculos del inventario' })
-  @ApiQuery({ name: 'status', required: false, example: 'AVAILABLE' })
+  @ApiOkResponse({ type: [VehicleAdminDto] })
+  @ApiQuery({ name: 'status', required: false, enum: VEHICLE_STATUSES })
   list(@Query('status') status?: string) {
     return this.vehicles.find({
       where: status ? { status } : {},
@@ -63,12 +67,18 @@ export class VehiclesAdminController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Obtener un vehiculo con su galeria' })
+  @ApiParam({ name: 'id', description: 'vehicle_id (ej. VEH-1001)' })
+  @ApiOkResponse({ type: VehicleAdminDto })
+  @ApiProblems(404)
   get(@Param('id') id: string) {
     return findOr404(this.vehicles, { vehicle_id: id }, 'Vehiculo', id, ['depot', 'supplier', 'images']);
   }
 
   @Post()
   @ApiOperation({ summary: 'Crear un vehiculo' })
+  @ApiBody({ type: VehicleAdminDto })
+  @ApiCreatedResponse({ type: VehicleAdminDto })
+  @ApiProblems(400)
   async create(@Body() body: Partial<Vehicle>) {
     requireFields(body, ['make', 'model', 'year', 'plate', 'price_per_day', 'depot_id', 'supplier_id']);
     if (!body.vehicle_id) body.vehicle_id = `VEH-${Date.now()}`;
@@ -78,6 +88,10 @@ export class VehiclesAdminController {
 
   @Put(':id')
   @ApiOperation({ summary: 'Actualizar un vehiculo (acepta `gallery` para reemplazar sus fotos)' })
+  @ApiParam({ name: 'id', description: 'vehicle_id (ej. VEH-1001)' })
+  @ApiBody({ type: VehicleAdminDto, description: 'Campos a modificar (parcial)' })
+  @ApiOkResponse({ type: VehicleAdminDto })
+  @ApiProblems(400, 404)
   async update(
     @Param('id') id: string,
     @Body() body: Partial<Vehicle> & { gallery?: string[] },
@@ -89,6 +103,8 @@ export class VehiclesAdminController {
     // La galeria se gestiona aparte: `gallery` reemplaza todas las fotos; si solo cambia
     // main_image_url se actualiza la foto principal (posicion 0) para mantenerlas en sincronia.
     const { gallery, images: _images, vehicle_id: _id, ...campos } = body;
+    // Si el admin saca el vehiculo del lavado a mano, wash_until deja de tener sentido
+    if (campos.status && campos.status !== 'WASHING') campos.wash_until = null;
     const mainAnterior = v.main_image_url;
     Object.assign(v, campos);
     const saved = await this.vehicles.save(v);
@@ -111,6 +127,9 @@ export class VehiclesAdminController {
   @Delete(':id')
   @HttpCode(204)
   @ApiOperation({ summary: 'Eliminar un vehiculo (sus imagenes se borran en cascada)' })
+  @ApiParam({ name: 'id', description: 'vehicle_id (ej. VEH-1001)' })
+  @ApiNoContentResponse({ description: 'Eliminado' })
+  @ApiProblems(404, 409)
   remove(@Param('id') id: string) {
     return deleteOr404(this.vehicles, { vehicle_id: id }, 'Vehiculo', id);
   }

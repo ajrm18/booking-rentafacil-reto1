@@ -1,9 +1,26 @@
 import {
   applyDecorators, BadRequestException, ConflictException, NotFoundException, UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { FindOptionsWhere, ObjectLiteral, QueryFailedError, Repository } from 'typeorm';
 import { OAuth2Guard, RequireScopes } from '../../../common/guards/oauth2.guard';
+import { ProblemDetailsDto } from '../../../common/dto/problem-details.dto';
+
+const DESCRIPCION_PROBLEMA: Record<number, string> = {
+  400: 'Petición inválida (Problem Details con invalidParams)',
+  401: 'Falta el JWT o expiró',
+  403: 'El token no tiene el scope requerido',
+  404: 'El registro no existe',
+  409: 'Conflicto con el estado actual del registro',
+  429: 'Demasiadas peticiones (cabecera Retry-After)',
+};
+
+/** Respuestas de error en formato RFC 7807 (application/problem+json). */
+export const ApiProblems = (...statuses: number[]) => applyDecorators(
+  ...statuses.map((status) => ApiResponse({
+    status, description: DESCRIPCION_PROBLEMA[status], type: ProblemDetailsDto,
+  })),
+);
 
 /**
  * Decorador comun de las APIs de administracion (una por tabla): tag de Swagger,
@@ -11,7 +28,8 @@ import { OAuth2Guard, RequireScopes } from '../../../common/guards/oauth2.guard'
  */
 export const AdminApi = (tag: string) => applyDecorators(
   ApiTags(tag),
-  ApiBearerAuth(),
+  ApiBearerAuth('bearer'),
+  ApiProblems(401, 403),
   UseGuards(OAuth2Guard),
   RequireScopes('autos:webhooks'),
 );

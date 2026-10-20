@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { AuthContext, OAuth2Guard, RequireScopes } from '../../common/guards/oauth2.guard';
+import { ApiProblems } from './admin/admin-api.helpers';
 import { AutosService } from './autos.service';
 
 /**
@@ -12,7 +13,8 @@ import { AutosService } from './autos.service';
  * orden por id; para la página "Mis reservas" el cliente necesita listar las suyas, identificadas
  * por el `sub` del JWT igual que en /orders/{orderId}.
  */
-@ApiTags('Cuenta (fuera del contrato)')
+@ApiTags('Account')
+@ApiProblems(401)
 @ApiBearerAuth()
 @Controller('account')
 @UseGuards(OAuth2Guard)

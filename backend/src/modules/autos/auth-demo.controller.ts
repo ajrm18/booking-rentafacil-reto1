@@ -1,5 +1,5 @@
 import { Body, Controller, HttpCode, Post, UnauthorizedException, UseGuards } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiCreatedResponse, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -7,7 +7,8 @@ import { IsIn, IsOptional, IsString } from 'class-validator';
 import { hashPassword, verifyPassword } from '../../common/password';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { User } from './entities/user.entity';
-import { requireFields } from './admin/admin-api.helpers';
+import { ApiProblems, requireFields } from './admin/admin-api.helpers';
+import { LoginRequestDto, TokenResponseDto } from './admin/admin-schemas.dto';
 import { validarUsuario } from './user-validaciones';
 
 /**
@@ -40,7 +41,7 @@ export const SCOPES_POR_ROL = {
   client: ['autos:read', 'autos:book', 'autos:cancel'],
 } as const;
 
-@ApiTags('Autenticación (demo)')
+@ApiTags('Auth')
 @Controller('auth')
 export class AuthDemoController {
   constructor(
@@ -51,7 +52,9 @@ export class AuthDemoController {
   @Post('token')
   @HttpCode(201)
   @ApiOperation({ summary: 'Emitir JWT con scopes (demo local, no forma parte del contrato oficial)' })
-  @ApiBody({ type: TokenDto })
+  @ApiBody({ type: LoginRequestDto })
+  @ApiCreatedResponse({ type: TokenResponseDto, description: 'JWT con los scopes del rol del usuario' })
+  @ApiProblems(400, 401)
   async token(@Body() body: TokenDto) {
     // Usuarios de la tabla `users` (el seed crea admin, maría y carlos; el admin puede crear más)
     const user = await this.users.createQueryBuilder('u')
@@ -75,6 +78,8 @@ export class AuthDemoController {
   @UseGuards(RateLimitGuard)
   @ApiOperation({ summary: 'Registrar un cliente nuevo y devolver su JWT (demo local, no forma parte del contrato oficial)' })
   @ApiBody({ type: RegisterDto })
+  @ApiCreatedResponse({ type: TokenResponseDto, description: 'Cliente creado (role=client) y su JWT' })
+  @ApiProblems(400, 429)
   async register(@Body() body: RegisterDto) {
     requireFields(body, ['first_name', 'last_name', 'email', 'phone', 'national_id', 'password']);
     const datos = await validarUsuario(this.users, body);

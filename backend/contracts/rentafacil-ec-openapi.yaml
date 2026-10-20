@@ -1,0 +1,1417 @@
+# Contrato interno propio de RentaFacil EC.
+# Complementa (no reemplaza) a contracts/autos-openapi.yaml (GDS Autos Core API v1.0.0),
+# que sigue siendo el contrato publico oficial e intocable.
+openapi: 3.0.3
+
+info:
+  title: RentaFacil EC Internal API
+  version: 1.0.0
+  description: |
+    API interna del BFF (Backend for Frontend) de **RentaFacil EC**. Es complementaria al contrato
+    publico **GDS Autos Core API v1.0.0** (`contracts/autos-openapi.yaml`): aqui se documentan solo
+    los endpoints propios del proyecto que no forman parte del contrato del Booking Hub.
+
+    - **Auth**: Authorization Server local (`/auth/token`, `/auth/register`) que emite los JWT con
+      scopes `autos:*` usados contra ambos contratos. Sustituye en el Reto 1 al servidor OAuth2
+      `auth.booking-hub.com` del contrato oficial.
+    - **Admin**: APIs CRUD del panel de administracion, una por tabla, mas la operacion de
+      **devolucion** de vehiculos (`POST /admin/orders/{orderId}/return`).
+    - **Account**: datos del usuario autenticado para el frontend.
+
+    Todas las rutas admin exigen un JWT con el scope de administrador `autos:webhooks`
+    (solo el rol `admin` lo recibe). Los errores siguen RFC 7807 (`application/problem+json`)
+    con el mismo esquema `ProblemDetails` del contrato oficial.
+
+    **Ciclo del vehiculo tras la devolucion**: `RESERVED` -> (return) -> `WASHING` durante 24 h ->
+    `AVAILABLE`. Mientras esta en `WASHING`, `POST /search` (contrato oficial) solo lo ofrece si
+    la recogida es posterior a `wash_until`. El paso a `AVAILABLE` ocurre solo (auto-sanado en
+    cada `/search` y `/details`), sin worker externo.
+  contact:
+    name: Anthony Rosero
+    email: anthonyrosero1827@gmail.com
+
+servers:
+- url: https://rentafacil-api.onrender.com/api/v1
+  description: Produccion (Render)
+- url: http://localhost:3000/api/v1
+  description: Local
+
+# Todos los endpoints exigen JWT salvo los que declaran `security: []` (login y registro).
+security:
+- bearerAuth: []
+
+tags:
+- name: Auth
+  description: Authorization Server local (login y registro de clientes)
+- name: Admin - Vehicles
+  description: CRUD de la tabla vehicles (incluye estado WASHING y wash_until)
+- name: Admin - Depots
+  description: CRUD de la tabla depots (cada cambio emite el webhook DEPOT_UPDATE)
+- name: Admin - Suppliers
+  description: CRUD de la tabla suppliers
+- name: Admin - Orders
+  description: CRUD de la tabla orders
+- name: Admin - Users
+  description: CRUD de la tabla users (nunca devuelve la contrasena)
+- name: Admin - Returns
+  description: Devolucion de vehiculos; la orden sigue CONFIRMED y el vehiculo pasa a WASHING 24 h
+- name: Admin - Dashboard
+  description: Estadisticas agregadas para el panel de control
+- name: Admin - Other
+  description: Resto de tablas (vehicle_images, holds, order_previews, webhook_subscriptions)
+- name: Account
+  description: Datos del usuario autenticado (dueno = sub del JWT)
+
+paths:
+
+  # ───────────────────────────── Auth ─────────────────────────────
+  /auth/token:
+    post:
+      tags: [Auth]
+      summary: Iniciar sesion y obtener un JWT
+      description: Valida correo y contrasena contra la tabla `users` y emite un JWT con los scopes del rol.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '201':
+          description: JWT emitido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Registrar un cliente nuevo
+      description: |
+        Registro publico. El rol siempre es `client` (enviar `role` responde 400). Devuelve la misma
+        respuesta que `/auth/token`, asi el cliente entra directamente. Endpoint publico (sin JWT),
+        con limite de peticiones.
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Cliente creado y su JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '429':
+          $ref: '#/components/responses/ProblemDetails429'
+
+  # ───────────────────────────── Admin - Vehicles ─────────────────────────────
+  /admin/vehicles:
+    get:
+      tags: [Admin - Vehicles]
+      summary: Listar todos los vehiculos del inventario
+      operationId: listVehicles
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/VehicleStatus'
+      responses:
+        '200':
+          description: Vehiculos (con agencia, proveedor e imagenes)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VehicleAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin - Vehicles]
+      summary: Crear un vehiculo
+      description: 'Obligatorios: make, model, year, plate, price_per_day, depot_id, supplier_id. Si falta vehicle_id se genera VEH-<timestamp>.'
+      operationId: createVehicle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VehicleAdmin'
+      responses:
+        '201':
+          description: Vehiculo creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+
+  /admin/vehicles/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: vehicle_id (ej. VEH-1001)
+      schema:
+        type: string
+    get:
+      tags: [Admin - Vehicles]
+      summary: Obtener un vehiculo con su galeria
+      operationId: getVehicle
+      responses:
+        '200':
+          description: Vehiculo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin - Vehicles]
+      summary: Actualizar un vehiculo
+      description: |
+        Actualizacion parcial. Acepta `gallery` (array de URLs) para reemplazar las fotos.
+        Si `status` cambia a un valor distinto de WASHING, `wash_until` se limpia.
+      operationId: updateVehicle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/VehicleAdmin'
+              - type: object
+                properties:
+                  gallery:
+                    type: array
+                    items:
+                      type: string
+                      format: uri
+      responses:
+        '200':
+          description: Vehiculo actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    delete:
+      tags: [Admin - Vehicles]
+      summary: Eliminar un vehiculo (sus imagenes se borran en cascada)
+      operationId: deleteVehicle
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+
+  # ───────────────────────────── Admin - Depots ─────────────────────────────
+  /admin/depots:
+    get:
+      tags: [Admin - Depots]
+      summary: Listar agencias
+      operationId: listDepots
+      responses:
+        '200':
+          description: Agencias
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DepotAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin - Depots]
+      summary: Crear una agencia
+      description: 'Obligatorios: name, city.'
+      operationId: createDepot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepotAdmin'
+      responses:
+        '201':
+          description: Agencia creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepotAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+
+  /admin/depots/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: depot_id
+      schema:
+        type: integer
+    get:
+      tags: [Admin - Depots]
+      summary: Obtener una agencia
+      operationId: getDepot
+      responses:
+        '200':
+          description: Agencia
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepotAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin - Depots]
+      summary: Actualizar una agencia
+      operationId: updateDepot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepotAdmin'
+      responses:
+        '200':
+          description: Agencia actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepotAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    delete:
+      tags: [Admin - Depots]
+      summary: Eliminar una agencia (409 si tiene vehiculos)
+      operationId: deleteDepot
+      responses:
+        '204':
+          description: Eliminada
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+
+  # ───────────────────────────── Admin - Suppliers ─────────────────────────────
+  /admin/suppliers:
+    get:
+      tags: [Admin - Suppliers]
+      summary: Listar proveedores
+      operationId: listSuppliers
+      responses:
+        '200':
+          description: Proveedores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SupplierAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin - Suppliers]
+      summary: Crear un proveedor
+      description: 'Obligatorio: name.'
+      operationId: createSupplier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierAdmin'
+      responses:
+        '201':
+          description: Proveedor creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+
+  /admin/suppliers/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: supplier_id
+      schema:
+        type: integer
+    get:
+      tags: [Admin - Suppliers]
+      summary: Obtener un proveedor
+      operationId: getSupplier
+      responses:
+        '200':
+          description: Proveedor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin - Suppliers]
+      summary: Actualizar un proveedor
+      operationId: updateSupplier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierAdmin'
+      responses:
+        '200':
+          description: Proveedor actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    delete:
+      tags: [Admin - Suppliers]
+      summary: Eliminar un proveedor (409 si tiene vehiculos)
+      operationId: deleteSupplier
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+
+  # ───────────────────────────── Admin - Orders ─────────────────────────────
+  /admin/orders:
+    get:
+      tags: [Admin - Orders]
+      summary: Listar todas las ordenes
+      description: Mas recientes primero. Incluye returned_at / returned_by_sub si el vehiculo ya se devolvio.
+      operationId: listOrdersAdmin
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [CONFIRMED, CANCELLED, PENDING]
+      responses:
+        '200':
+          description: Ordenes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderAdminView'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin - Orders]
+      summary: Registrar una orden manual (ej. reserva hecha en mostrador)
+      description: 'Obligatorios: vehicle_id, total_price. El locator se genera (RENTAFACIL-XXXXXX).'
+      operationId: createOrderAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderAdminView'
+      responses:
+        '201':
+          description: Orden creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAdminView'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+
+  /admin/orders/{orderId}:
+    parameters:
+    - $ref: '#/components/parameters/OrderId'
+    get:
+      tags: [Admin - Orders]
+      summary: Obtener una orden
+      operationId: getOrderAdmin
+      responses:
+        '200':
+          description: Orden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAdminView'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin - Orders]
+      summary: Actualizar una orden (estado, datos del conductor...)
+      description: Actualizacion parcial (equivale al PATCH del panel; el BFF expone PUT).
+      operationId: updateOrderAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderAdminView'
+      responses:
+        '200':
+          description: Orden actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAdminView'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    delete:
+      tags: [Admin - Orders]
+      summary: Eliminar una orden
+      operationId: deleteOrderAdmin
+      responses:
+        '204':
+          description: Eliminada
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+
+  # ───────────────────────────── Admin - Returns ─────────────────────────────
+  /admin/orders/{orderId}/return:
+    parameters:
+    - $ref: '#/components/parameters/OrderId'
+    post:
+      tags: [Admin - Returns]
+      summary: Registrar la devolucion del vehiculo de una orden
+      description: |
+        - **No cancela** la orden: sigue `CONFIRMED` y se guardan `returned_at = ahora` y
+          `returned_by_sub = sub del JWT`.
+        - El vehiculo pasa a `WASHING` con `wash_until = ahora + 24 h`.
+        - `POST /search` solo lo ofrece para recogidas `>= wash_until`; al vencer el lavado vuelve
+          solo a `AVAILABLE`.
+        - **Idempotente**: si la orden ya tiene `returned_at`, responde 200 con el estado actual
+          sin modificar nada.
+        - Si el vehiculo ya esta reservado por **otra** orden activa (se devuelve una orden antigua),
+          solo se registra la devolucion y el vehiculo conserva su estado (evita una doble reserva).
+
+        Requiere los scopes `autos:webhooks` (administrador) y `autos:book`.
+      operationId: returnOrder
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Orden devuelta y estado del vehiculo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          description: La orden o su vehiculo no existen
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: La orden no esta CONFIRMED (code BOOKING_NOT_CONFIRMED)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  # ───────────────────────────── Admin - Users ─────────────────────────────
+  /admin/users:
+    get:
+      tags: [Admin - Users]
+      summary: Listar usuarios
+      operationId: listUsers
+      parameters:
+      - name: role
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [client, admin]
+      responses:
+        '200':
+          description: Usuarios (sin contrasena)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin - Users]
+      summary: Crear un usuario (cliente por defecto)
+      description: 'Obligatorios: first_name, last_name, email, password.'
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAdminInput'
+      responses:
+        '201':
+          description: Usuario creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+
+  /admin/users/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: user_id (UUID)
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags: [Admin - Users]
+      summary: Obtener un usuario
+      operationId: getUser
+      responses:
+        '200':
+          description: Usuario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin - Users]
+      summary: Actualizar un usuario (nombre, email, rol, telefono y, opcionalmente, contrasena)
+      description: Un admin no puede quitarse a si mismo el rol de administrador.
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAdminInput'
+      responses:
+        '200':
+          description: Usuario actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    delete:
+      tags: [Admin - Users]
+      summary: Eliminar un usuario (409 si es la propia cuenta)
+      operationId: deleteUser
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+
+  # ───────────────────────────── Admin - Other ─────────────────────────────
+  /admin/stats:
+    get:
+      tags: [Admin - Dashboard]
+      summary: Estadisticas agregadas para el panel de control
+      operationId: adminStats
+      responses:
+        '200':
+          description: Conteos de las tablas, ordenes finalizadas e ingresos
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+
+  /admin/{resource}:
+    parameters:
+    - $ref: '#/components/parameters/GenericResource'
+    get:
+      tags: [Admin - Other]
+      summary: Listar registros de vehicle-images, holds, order-previews o webhooks
+      description: 'Filtros: vehicle-images `?vehicle_id=`, holds `?status=&vehicle_id=`, order-previews `?vehicle_id=`.'
+      operationId: listGeneric
+      responses:
+        '200':
+          description: Registros
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GenericRecord'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin - Other]
+      summary: Crear un registro
+      operationId: createGeneric
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRecord'
+      responses:
+        '201':
+          description: Registro creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericRecord'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+
+  /admin/{resource}/{id}:
+    parameters:
+    - $ref: '#/components/parameters/GenericResource'
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      tags: [Admin - Other]
+      summary: Obtener un registro
+      operationId: getGeneric
+      responses:
+        '200':
+          description: Registro
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericRecord'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin - Other]
+      summary: Actualizar un registro
+      operationId: updateGeneric
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRecord'
+      responses:
+        '200':
+          description: Registro actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericRecord'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    delete:
+      tags: [Admin - Other]
+      summary: Eliminar un registro
+      operationId: deleteGeneric
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+
+  # ───────────────────────────── Account ─────────────────────────────
+  /account/profile:
+    get:
+      tags: [Account]
+      summary: Mi perfil (para autollenar los datos del conductor)
+      description: 'Scope: autos:read.'
+      operationId: myProfile
+      responses:
+        '200':
+          description: Perfil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  first_name:
+                    type: string
+                  last_name:
+                    type: string
+                  email:
+                    type: string
+                  phone:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+
+  /account/orders:
+    get:
+      tags: [Account]
+      summary: Mis ordenes (OrderDetail del contrato oficial); dueno = sub del token
+      description: 'Scope: autos:read.'
+      operationId: myOrders
+      responses:
+        '200':
+          description: Ordenes del usuario
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT emitido por `POST /auth/token`. Payload: `sub` (correo), `role` y `scopes`
+        (`autos:read autos:book autos:cancel` para clientes; ademas `autos:webhooks` para admin).
+
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: order_id (UUID)
+      schema:
+        type: string
+        format: uuid
+    GenericResource:
+      name: resource
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [vehicle-images, holds, order-previews, webhooks]
+
+  responses:
+    ProblemDetails400:
+      description: Peticion invalida (invalidParams detalla los campos)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails401:
+      description: Falta el JWT, expiro o las credenciales no son validas
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails403:
+      description: El token no tiene el scope requerido
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails404:
+      description: No encontrado
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails409:
+      description: Conflicto con el estado actual (ej. registro con dependencias)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails429:
+      description: Demasiadas peticiones
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+  schemas:
+
+    # Mismo esquema RFC 7807 que components.schemas.ProblemDetails de autos-openapi.yaml
+    ProblemDetails:
+      type: object
+      additionalProperties: false
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          enum:
+          - VALIDATION_FAILED
+          - CAR_NO_LONGER_AVAILABLE
+          - PRICE_CHANGED
+          - DEPOT_CLOSED
+          - DRIVER_AGE_RESTRICTION
+          - BOOKING_NOT_CONFIRMED
+          - CANCELLATION_NOT_ALLOWED
+          - RATE_LIMIT_EXCEEDED
+          - PAYMENT_REFERENCE_INVALID
+          - PAYMENT_NOT_AUTHORIZED
+        invalidParams:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              reason:
+                type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          example: admin@rentafacil.ec
+        password:
+          type: string
+          example: Admin12345
+
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [first_name, last_name, email, phone, national_id, password]
+      properties:
+        first_name:
+          type: string
+          example: Ana
+        last_name:
+          type: string
+          example: Torres
+        email:
+          type: string
+          example: ana@example.com
+        phone:
+          type: string
+          example: '0983563584'
+        national_id:
+          type: string
+          description: Cedula ecuatoriana (10 digitos)
+          example: '1710034065'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, scope, user]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          example: 86400
+        scope:
+          type: string
+          example: autos:read autos:book autos:cancel autos:webhooks
+        user:
+          type: object
+          properties:
+            email:
+              type: string
+            role:
+              type: string
+              enum: [client, admin]
+            first_name:
+              type: string
+            last_name:
+              type: string
+
+    VehicleStatus:
+      type: string
+      description: |
+        AVAILABLE: reservable. RESERVED: rentado (tiene una orden activa). WASHING: en lavado
+        tras la devolucion, hasta wash_until. MAINTENANCE / INACTIVE: fuera de servicio.
+      enum: [AVAILABLE, RESERVED, WASHING, MAINTENANCE, INACTIVE]
+
+    VehicleAdmin:
+      type: object
+      properties:
+        vehicle_id:
+          type: string
+          example: VEH-1001
+        make:
+          type: string
+          example: Toyota
+        model:
+          type: string
+          example: Corolla
+        year:
+          type: integer
+          example: 2023
+        plate:
+          type: string
+          example: PBA-1001
+        color:
+          type: string
+          nullable: true
+        seats:
+          type: integer
+        doors:
+          type: integer
+        bag_capacity:
+          type: integer
+        transmission:
+          type: string
+          enum: [manual, automatica]
+        fuel_type:
+          type: string
+          enum: [gasolina, diesel, hibrido, electrico]
+        car_type:
+          type: string
+          enum: [Compacto, Sedan, SUV, Camioneta, Lujo]
+        air_conditioning:
+          type: boolean
+        price_per_day:
+          type: number
+          example: 45
+        description:
+          type: string
+          nullable: true
+        main_image_url:
+          type: string
+          format: uri
+          nullable: true
+        status:
+          $ref: '#/components/schemas/VehicleStatus'
+        wash_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Fin del lavado post-devolucion (solo con status WASHING)
+        depot_id:
+          type: integer
+        supplier_id:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    DepotAdmin:
+      type: object
+      properties:
+        depot_id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          example: RentaFacil Aeropuerto Quito
+        city:
+          type: string
+          example: Quito
+        address:
+          type: string
+          nullable: true
+        airport:
+          type: string
+          nullable: true
+          example: UIO
+        city_id:
+          type: integer
+          nullable: true
+        latitude:
+          type: number
+          nullable: true
+        longitude:
+          type: number
+          nullable: true
+        score:
+          type: number
+          example: 4.5
+        active:
+          type: boolean
+
+    SupplierAdmin:
+      type: object
+      properties:
+        supplier_id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          example: RentaFacil Prime
+        brand:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+
+    OrderAdminView:
+      type: object
+      description: Fila completa de la tabla orders (vista del administrador).
+      properties:
+        order_id:
+          type: string
+          format: uuid
+          readOnly: true
+        locator:
+          type: string
+          example: RENTAFACIL-A1B2C3
+        status:
+          type: string
+          enum: [CONFIRMED, CANCELLED, PENDING]
+        vehicle_id:
+          type: string
+        owner_sub:
+          type: string
+          nullable: true
+        hold_id:
+          type: string
+          nullable: true
+        order_preview_id:
+          type: string
+          nullable: true
+        payment_reference:
+          type: string
+          nullable: true
+        vehicle_details:
+          type: object
+          additionalProperties: true
+        route_details:
+          type: object
+          additionalProperties: true
+        driver_details:
+          type: object
+          nullable: true
+          additionalProperties: true
+        extras:
+          type: array
+          items:
+            type: string
+        total_price:
+          type: number
+        currency:
+          type: string
+          example: USD
+        returned_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Fecha de devolucion del vehiculo
+        returned_by_sub:
+          type: string
+          nullable: true
+          description: sub del admin que registro la devolucion
+        creation_date:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    UserAdmin:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [client, admin]
+        phone:
+          type: string
+          nullable: true
+        national_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserAdminInput:
+      type: object
+      properties:
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          description: Obligatoria al crear; opcional al editar
+        role:
+          type: string
+          enum: [client, admin]
+          default: client
+        phone:
+          type: string
+        national_id:
+          type: string
+
+    ReturnResponse:
+      type: object
+      required: [order, vehicle]
+      properties:
+        order:
+          type: object
+          required: [order_id, locator, status, returned_at, returned_by_sub]
+          properties:
+            order_id:
+              type: string
+              format: uuid
+            locator:
+              type: string
+            status:
+              type: string
+              enum: [CONFIRMED]
+              description: La devolucion no cancela la orden
+            vehicle_details:
+              type: object
+              additionalProperties: true
+            route_details:
+              type: object
+              additionalProperties: true
+            total_price:
+              type: number
+            currency:
+              type: string
+            creation_date:
+              type: string
+              format: date-time
+            owner_sub:
+              type: string
+              nullable: true
+            returned_at:
+              type: string
+              format: date-time
+            returned_by_sub:
+              type: string
+              example: admin@rentafacil.ec
+            _links:
+              type: object
+              additionalProperties:
+                type: string
+        vehicle:
+          type: object
+          nullable: true
+          properties:
+            vehicle_id:
+              type: string
+            status:
+              $ref: '#/components/schemas/VehicleStatus'
+            wash_until:
+              type: string
+              format: date-time
+              nullable: true
+      example:
+        order:
+          order_id: 3f1c2a9e-8b7d-4c6e-9a1b-2d3e4f5a6b7c
+          locator: RENTAFACIL-A1B2C3
+          status: CONFIRMED
+          total_price: 157.5
+          currency: USD
+          creation_date: '2026-10-15T14:00:00.000Z'
+          returned_at: '2026-10-19T15:30:00.000Z'
+          returned_by_sub: admin@rentafacil.ec
+        vehicle:
+          vehicle_id: VEH-1001
+          status: WASHING
+          wash_until: '2026-10-20T15:30:00.000Z'
+
+    GenericRecord:
+      type: object
+      description: Fila de vehicle_images, holds, order_previews o webhook_subscriptions.
+      additionalProperties: true

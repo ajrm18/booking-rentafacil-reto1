@@ -105,6 +105,16 @@ export interface OrderDetail {
   currency: string;
   creation_date: string;
   _links: Record<string, string>;
+  /** Solo en las vistas admin: devolución registrada con POST /admin/orders/{id}/return. */
+  returned_at?: string | null;
+  returned_by_sub?: string | null;
+  owner_sub?: string | null;
+}
+
+/** Respuesta de POST /admin/orders/{id}/return. */
+export interface ReturnResponse {
+  order: OrderDetail;
+  vehicle: { vehicle_id: string; status: string; wash_until: string | null } | null;
 }
 
 export interface AuthUser {

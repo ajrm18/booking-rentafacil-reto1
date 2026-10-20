@@ -1,16 +1,16 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger, BadRequestException, ValidationError } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
-import { ProblemDetailsFilter } from './common/filters/http-exception.filter';
+import { configureApp } from './app.setup';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
 
-  // Prefijo global: /api/v1 (alineado con servers.url = https://.../autos/v1)
-  app.setGlobalPrefix('api/v1');
+  // Prefijo /api/v1, ValidationPipe y filtro Problem Details (compartido con las pruebas e2e)
+  configureApp(app);
 
   app.enableCors({
     origin: [
@@ -22,34 +22,6 @@ async function bootstrap() {
     credentials: true,
     exposedHeaders: ['Cache-Control', 'X-API-Deprecation-Date', 'Retry-After'],
   });
-
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-      exceptionFactory: (errors) => {
-        // Aplana errores anidados: { name: 'route.pickup.datetime', reason: '...' }
-        const flatten = (errs: ValidationError[], prefix = ''): { name: string; reason: string }[] =>
-          errs.flatMap((e) => {
-            const name = prefix ? `${prefix}.${e.property}` : e.property;
-            const own = e.constraints ? [{ name, reason: Object.values(e.constraints).join(', ') }] : [];
-            return [...own, ...flatten(e.children || [], name)];
-          });
-        const invalidParams = flatten(errors);
-        return new BadRequestException({
-          type: 'https://api.booking-hub.com/errors/validation-failed',
-          title: 'Petición inválida',
-          status: 400,
-          code: 'VALIDATION_FAILED',
-          invalidParams,
-        });
-      },
-    }),
-  );
-
-  app.useGlobalFilters(new ProblemDetailsFilter());
 
   // Metadatos y seguridad copiados de contracts/autos-openapi.yaml (info + components.securitySchemes)
   const swagger = new DocumentBuilder()
@@ -94,14 +66,17 @@ async function bootstrap() {
     .addTag('Gestión de Órdenes (Reservas)')
     .addTag('Componentes Comunes')
     .addTag('Webhooks')
-    .addTag('Autenticación (demo)', 'Endpoint auxiliar para emitir JWT localmente')
+    .addTag('Account', 'Datos del usuario autenticado (fuera del contrato GDS)')
+    .addTag('Auth', 'Authorization Server local: login y registro de clientes (fuera del contrato GDS)')
     .addTag('Admin - Suppliers', 'CRUD de la tabla suppliers')
     .addTag('Admin - Depots', 'CRUD de la tabla depots')
-    .addTag('Admin - Vehiculos', 'CRUD de la tabla vehicles')
+    .addTag('Admin - Vehicles', 'CRUD de la tabla vehicles (incluye estado WASHING y wash_until)')
     .addTag('Admin - Imagenes de Vehiculos', 'CRUD de la tabla vehicle_images')
     .addTag('Admin - Holds', 'CRUD de la tabla holds')
     .addTag('Admin - Previsualizaciones de Orden', 'CRUD de la tabla order_previews')
-    .addTag('Admin - Ordenes', 'CRUD de la tabla orders')
+    .addTag('Admin - Orders', 'CRUD de la tabla orders')
+    .addTag('Admin - Returns', 'Devolucion de vehiculos: la orden sigue CONFIRMED y el vehiculo pasa a WASHING 24 h')
+    .addTag('Admin - Users', 'CRUD de la tabla users')
     .addTag('Admin - Webhooks', 'CRUD de la tabla webhook_subscriptions')
     .addTag('Admin - Dashboard', 'Estadisticas agregadas')
     .build();
@@ -111,7 +86,7 @@ async function bootstrap() {
   for (const [path, item] of Object.entries(document.paths)) {
     for (const op of Object.values(item) as any[]) {
       const publico = op?.parameters?.some((p: any) => p.in === 'header' && p.name === 'X-Affiliate-Id')
-        || path.endsWith('/auth/token');
+        || path.endsWith('/auth/token') || path.endsWith('/auth/register');
       if (publico) op.security = [];
     }
   }

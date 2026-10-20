@@ -3,10 +3,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, MoreThanOrEqual, Repository } from 'typeorm';
+import { In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { WebhookDispatcher, WebhookEvent } from './webhook-dispatcher.service';
-import { Vehicle } from './entities/vehicle.entity';
+import { Vehicle, WASH_HOURS } from './entities/vehicle.entity';
 import { Depot } from './entities/depot.entity';
 import { Supplier } from './entities/supplier.entity';
 import { VehicleImage } from './entities/vehicle-image.entity';
@@ -24,6 +24,22 @@ import {
   OrderModifyRequestDto, OrderPreviewRequestDto, OrderPreviewResponseDto,
   WebhookSubscriptionDto,
 } from './dto/orders.dto';
+
+/**
+ * Regla de disponibilidad de un vehiculo para un alquiler que empieza en `pickup`:
+ * AVAILABLE siempre; WASHING solo si el alquiler empieza cuando ya termino el lavado
+ * (pickup >= wash_until); RESERVED (rentado)/MAINTENANCE/INACTIVE nunca.
+ * /search aplica la misma regla en SQL (ver AutosService.search).
+ */
+export function vehicleAvailableFor(
+  v: Pick<Vehicle, 'status' | 'wash_until'>, pickup: Date,
+): boolean {
+  if (v.status === 'AVAILABLE') return true;
+  if (v.status === 'WASHING') {
+    return !!v.wash_until && pickup.getTime() >= new Date(v.wash_until).getTime();
+  }
+  return false;
+}
 
 /**
  * Servicio principal del dominio autos. Implementa la logica alineada con
@@ -78,11 +94,14 @@ export class AutosService {
       });
     }
     const totalDays = this.daysBetween(pickup, dropoff);
+    await this.releaseFinishedWashes();
 
+    // Misma regla que vehicleAvailableFor: un vehiculo en lavado aparece solo si se recoge
+    // cuando el lavado ya termino.
     const qb = this.vehicles.createQueryBuilder('v')
       .leftJoinAndSelect('v.depot', 'd')
       .leftJoinAndSelect('v.supplier', 's')
-      .where('v.status = :st', { st: 'AVAILABLE' });
+      .where("(v.status = 'AVAILABLE' OR (v.status = 'WASHING' AND v.wash_until <= :pickup))", { pickup });
 
     // Excluir vehículos con orden CONFIRMED (ocupados)
     const busyIds = await this.busyVehicleIds();
@@ -119,6 +138,7 @@ export class AutosService {
   }
 
   async getDetails(req: CarDetailsRequestDto): Promise<any> {
+    await this.releaseFinishedWashes();
     const where: any = {};
     if (Array.isArray(req?.vehicle_ids) && req.vehicle_ids.length > 0) where.vehicle_id = In(req.vehicle_ids);
     // last_modified: solo vehículos cambiados desde esa fecha (sincronización incremental)
@@ -268,10 +288,13 @@ export class AutosService {
 
   async holdOrder(req: OrderHoldRequestDto): Promise<OrderHoldResponseDto> {
     const vehicle = await this.vehicles.findOne({ where: { vehicle_id: req.vehicle_id } });
-    if (!vehicle || vehicle.status !== 'AVAILABLE') {
+    if (!vehicle || !['AVAILABLE', 'WASHING'].includes(vehicle.status)) {
       throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehículo ya no está disponible');
     }
-    this.decodeSearchToken(req.search_token);
+    const { route } = this.decodeSearchToken(req.search_token);
+    if (!vehicleAvailableFor(vehicle, new Date(route.pickup.datetime))) {
+      throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehículo está en lavado en la fecha de recogida');
+    }
 
     const hold_id = `HLD-${randomUUID().slice(0, 8)}`;
     const expires_at = new Date(Date.now() + AutosService.HOLD_MINUTES * 60 * 1000);
@@ -354,7 +377,8 @@ export class AutosService {
     }
 
     const vehicle = await this.vehicles.findOne({ where: { vehicle_id: preview.vehicle_id } });
-    if (!vehicle || vehicle.status !== 'AVAILABLE') {
+    const pickup = new Date(preview.route?.pickup?.datetime ?? Date.now());
+    if (!vehicle || !vehicleAvailableFor(vehicle, pickup)) {
       throw this.conflict('CAR_NO_LONGER_AVAILABLE', 'El vehículo ya no está disponible');
     }
     if (!req.payment_reference || req.payment_reference.length < 4) {
@@ -383,8 +407,9 @@ export class AutosService {
       idempotency_key: idempotencyKey,
     });
     const saved = await this.orders.save(order);
-    // Marcamos el vehículo como RESERVADO
+    // Marcamos el vehículo como RESERVADO (si estaba en lavado, la reserva empieza después)
     vehicle.status = 'RESERVED';
+    vehicle.wash_until = null;
     await this.vehicles.save(vehicle);
 
     const detail = this.toOrderDetail(saved);
@@ -439,7 +464,9 @@ export class AutosService {
       order.status = 'CANCELLED';
       await this.orders.save(order);
 
-      const vehicle = await this.vehicles.findOne({ where: { vehicle_id: order.vehicle_id } });
+      // Si ya se devolvio, el vehiculo sigue su propio ciclo (lavado / otra reserva): no se toca.
+      const vehicle = order.returned_at
+        ? null : await this.vehicles.findOne({ where: { vehicle_id: order.vehicle_id } });
       if (vehicle) {
         vehicle.status = 'AVAILABLE';
         await this.vehicles.save(vehicle);
@@ -447,6 +474,70 @@ export class AutosService {
       this.fireWebhook('CAR_ORDER_CANCELLED', order.order_id, { locator: order.locator, status: order.status });
       return { status: 'CANCELLED', order_id: order.order_id };
     });
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  Devolucion (BFF admin, fuera del contrato): POST /admin/orders/{id}/return
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Registra la devolucion del vehiculo sin cancelar la orden (sigue CONFIRMED) y deja el
+   * vehiculo en WASHING durante WASH_HOURS. Idempotente: si la orden ya tiene returned_at
+   * responde el estado actual sin modificar nada.
+   */
+  async returnOrder(orderId: string, auth: AuthContext): Promise<any> {
+    const order = await this.orders.findOne({ where: { order_id: orderId } });
+    if (!order) throw new NotFoundException(this.problem('BOOKING_NOT_CONFIRMED', `No existe la orden ${orderId}`, 404));
+    if (order.returned_at) return this.returnResponse(order);
+    if (order.status !== 'CONFIRMED') {
+      throw this.conflict('BOOKING_NOT_CONFIRMED',
+        `Orden en estado ${order.status}: solo se registra la devolución de órdenes CONFIRMED`);
+    }
+    const vehicle = await this.vehicles.findOne({ where: { vehicle_id: order.vehicle_id } });
+    if (!vehicle) {
+      throw new NotFoundException(this.problem('CAR_NO_LONGER_AVAILABLE', `No existe el vehículo ${order.vehicle_id}`, 404));
+    }
+
+    // Si se devuelve una orden antigua mientras el vehiculo ya esta reservado por otra orden activa,
+    // solo se registra la devolucion: pasarlo a WASHING liberaria esa otra reserva (doble reserva).
+    const otraReserva = (await this.busyVehicleIds(order.order_id)).has(vehicle.vehicle_id);
+
+    const now = new Date();
+    const washUntil = new Date(now.getTime() + WASH_HOURS * 60 * 60 * 1000);
+    await this.orders.manager.transaction(async (m) => {
+      // UPDATE condicionado a returned_at IS NULL: dos peticiones simultaneas no registran dos devoluciones
+      const r = await m.update(Order, { order_id: order.order_id, returned_at: IsNull() },
+        { returned_at: now, returned_by_sub: auth.sub });
+      if (!r.affected || otraReserva) return;
+      await m.update(Vehicle, { vehicle_id: vehicle.vehicle_id }, { status: 'WASHING', wash_until: washUntil });
+    });
+    return this.returnResponse(await this.orders.findOne({ where: { order_id: orderId } }));
+  }
+
+  private async returnResponse(order: Order): Promise<any> {
+    const v = await this.vehicles.findOne({ where: { vehicle_id: order.vehicle_id } });
+    return {
+      order: {
+        ...this.toOrderDetail(order),
+        owner_sub: order.owner_sub,
+        returned_at: this.iso(order.returned_at),
+        returned_by_sub: order.returned_by_sub,
+      },
+      vehicle: v ? { vehicle_id: v.vehicle_id, status: v.status, wash_until: this.iso(v.wash_until) } : null,
+    };
+  }
+
+  /**
+   * Auto-sanado sin worker externo (Render Free no tiene cron): cada /search y /details
+   * devuelve a AVAILABLE los vehiculos cuyo lavado ya termino.
+   */
+  async releaseFinishedWashes(): Promise<number> {
+    const r = await this.vehicles.createQueryBuilder()
+      .update(Vehicle)
+      .set({ status: 'AVAILABLE', wash_until: null })
+      .where("status = 'WASHING' AND wash_until <= NOW()")
+      .execute();
+    return r.affected ?? 0;
   }
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -567,14 +658,17 @@ export class AutosService {
     return { total_results: total, next_page: page * take < total ? String(page + 1) : null };
   }
 
-  private async busyVehicleIds(): Promise<Set<string>> {
+  private async busyVehicleIds(exceptOrderId?: string): Promise<Set<string>> {
     // Un vehículo está ocupado mientras tenga una orden CONFIRMED que aún no termina.
     // Las órdenes ya finalizadas (devolución en el pasado, p. ej. el historial del seed) no lo bloquean.
+    // Una orden ya devuelta (returned_at) tampoco lo bloquea: desde ahi manda el lavado.
     const confirmed = await this.orders.find({
-      where: { status: 'CONFIRMED' }, select: { vehicle_id: true, route_details: true },
+      where: { status: 'CONFIRMED', returned_at: IsNull() },
+      select: { order_id: true, vehicle_id: true, route_details: true },
     });
     const now = Date.now();
     return new Set(confirmed
+      .filter((o) => o.order_id !== exceptOrderId)
       .filter((o) => { const fin = Date.parse(o.route_details?.dropoff?.datetime); return isNaN(fin) || fin >= now; })
       .map((o) => o.vehicle_id));
   }
@@ -626,6 +720,11 @@ export class AutosService {
       creation_date: o.creation_date instanceof Date ? o.creation_date.toISOString() : o.creation_date,
       _links: links,
     };
+  }
+
+  private iso(d: Date | string | null | undefined): string | null {
+    if (!d) return null;
+    return d instanceof Date ? d.toISOString() : new Date(d).toISOString();
   }
 
   private conflict(code: string, detail: string): ConflictException {

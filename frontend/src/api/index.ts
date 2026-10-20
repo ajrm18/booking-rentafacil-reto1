@@ -1,7 +1,7 @@
 import { api, uuidv4 } from './client';
 import type {
   AdminUser, AdminUserInput, CarSearchRequest, CarSearchResponse, Depot, OrderDetail,
-  OrderHoldResponse, OrderPreviewResponse, RegisterInput, Supplier, TokenResponse, VehicleDetail,
+  OrderHoldResponse, OrderPreviewResponse, RegisterInput, ReturnResponse, Supplier, TokenResponse, VehicleDetail,
 } from '../types';
 
 /** Autenticación demo local */
@@ -75,6 +75,8 @@ export const admin = {
   updateSupplier: (id: number, data: any) => api.put<Supplier>(`/admin/suppliers/${id}`, data).then((r) => r.data),
   deleteSupplier: (id: number) => api.delete(`/admin/suppliers/${id}`),
   listOrders: (status?: string) => api.get<OrderDetail[]>('/admin/orders', { params: { status } }).then((r) => r.data),
+  /** Registra la devolución: la orden sigue CONFIRMED y el vehículo pasa a WASHING 24 h. */
+  returnOrder: (orderId: string) => api.post<ReturnResponse>(`/admin/orders/${orderId}/return`).then((r) => r.data),
 };
 
 /** Cuenta del usuario autenticado (fuera del contrato): sus órdenes por `sub` del token. */

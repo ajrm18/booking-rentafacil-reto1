@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { NOMBRE_RE } from '../../../common/validaciones';
+import { VEHICLE_STATUSES } from '../entities/vehicle.entity';
 
 /**
  * Validación de los cuerpos de las APIs de administración (vehículos, agencias y proveedores).
@@ -50,7 +51,7 @@ const ANIO_MAX = () => new Date().getFullYear() + 1;
 const TRANSMISIONES = ['manual', 'automatica'];
 const COMBUSTIBLES = ['gasolina', 'diesel', 'hibrido', 'electrico'];
 const CATEGORIAS = ['Compacto', 'Sedan', 'SUV', 'Camioneta', 'Lujo'];
-const ESTADOS = ['AVAILABLE', 'RESERVED', 'MAINTENANCE', 'INACTIVE'];
+const ESTADOS: readonly string[] = VEHICLE_STATUSES;
 
 export function validarVehiculo(body: any): void {
   const p: Problema[] = [];

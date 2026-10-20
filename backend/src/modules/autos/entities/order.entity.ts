@@ -56,6 +56,14 @@ export class Order {
   @Column({ type: 'varchar', length: 60, nullable: true, name: 'idempotency_key' })
   idempotency_key: string;
 
+  /** Devolucion del vehiculo (POST /admin/orders/{id}/return). La orden sigue CONFIRMED. */
+  @Column({ type: 'timestamptz', nullable: true, name: 'returned_at' })
+  returned_at: Date | null;
+
+  /** `sub` del JWT del admin que registro la devolucion. */
+  @Column({ type: 'varchar', length: 200, nullable: true, name: 'returned_by_sub' })
+  returned_by_sub: string | null;
+
   @CreateDateColumn({ name: 'creation_date' })
   creation_date: Date;
 
