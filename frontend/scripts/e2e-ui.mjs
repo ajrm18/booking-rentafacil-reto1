@@ -47,6 +47,7 @@ try {
   check('detalle del vehiculo abierto', true);
 
   console.log('\n# Fechas, franjas de 30 min y cobertura (contrato v2)');
+  await page.locator('#det-hini option').first().waitFor({ state: 'attached' });
   const franjas = await page.locator('#det-hini option').allTextContents();
   check('hora de recogida en franjas de 30 min (solo las que no pasaron)',
     franjas.length > 0 && franjas.length <= 48 && franjas.every((h) => /^([01]\d|2[0-3]):(00|30)$/.test(h)), franjas.join(','));
