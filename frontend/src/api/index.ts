@@ -75,7 +75,7 @@ export const admin = {
   updateSupplier: (id: number, data: any) => api.put<Supplier>(`/admin/suppliers/${id}`, data).then((r) => r.data),
   deleteSupplier: (id: number) => api.delete(`/admin/suppliers/${id}`),
   listOrders: (status?: string) => api.get<OrderDetail[]>('/admin/orders', { params: { status } }).then((r) => r.data),
-  /** Registra la devolución: la orden sigue CONFIRMED y el vehículo pasa a WASHING 24 h. */
+  /** Registra la devolución (Reto 1): la orden sigue CONFIRMED y el vehículo pasa a WASHING 2 h. */
   returnOrder: (orderId: string) => api.post<ReturnResponse>(`/admin/orders/${orderId}/return`).then((r) => r.data),
 };
 

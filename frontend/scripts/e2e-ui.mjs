@@ -1,7 +1,7 @@
 /**
  * E2E de UI en Chrome real: reserva completa con el simulador de pagos.
- *   / -> Catalogo -> vehiculo -> preview -> modal de pago -> "Usar tarjeta de prueba"
- *   -> "Pagar ahora" -> confirmacion con localizador RENTAFACIL-...
+ *   / -> Catalogo -> vehiculo (franjas de 30 min + cobertura) -> datos del conductor -> modal de pago
+ *   -> "Usar tarjeta de prueba" -> "Pagar ahora" -> POST /api/v2/autos/orders/create -> confirmacion con PNR
  * Ademas comprueba la accesibilidad del modal (foco inicial, focus trap, Escape) y Luhn.
  *
  * Uso:  node frontend/scripts/e2e-ui.mjs [URL]   (por defecto produccion en Vercel)
@@ -46,10 +46,15 @@ try {
   await page.waitForURL(/\/vehiculos\//);
   check('detalle del vehiculo abierto', true);
 
-  console.log('\n# Preview');
+  console.log('\n# Fechas, franjas de 30 min y cobertura (contrato v2)');
+  const franjas = await page.locator('#det-hini option').allTextContents();
+  check('hora de recogida en franjas de 30 min (solo las que no pasaron)',
+    franjas.length > 0 && franjas.length <= 48 && franjas.every((h) => /^([01]\d|2[0-3]):(00|30)$/.test(h)), franjas.join(','));
+  await page.getByRole('radio', { name: /Cobertura Total/ }).check();
+  check('cobertura TOTAL seleccionable (+$18/día)', await page.getByText('+$18.00/día').isVisible());
   await page.getByRole('button', { name: 'Continuar' }).click();
-  await page.getByRole('heading', { name: 'Confirmar reserva' }).waitFor();
-  check('preview generado', true);
+  await page.getByRole('heading', { name: 'Datos del conductor' }).waitFor();
+  check('paso de datos del conductor', true);
 
   console.log('\n# Datos del conductor (autollenado y validación)');
   const nombre = page.locator('#drv-first_name'), apellido = page.locator('#drv-last_name');
@@ -71,6 +76,10 @@ try {
   await page.getByRole('button', { name: 'Confirmar reserva' }).click();
   check('con errores no abre el pago', (await page.getByRole('dialog').count()) === 0);
   await correo.fill('maria@example.com');
+  await page.locator('#drv-licencia').fill('1723456789');
+  await page.locator('#drv-edad').fill('17'); await page.locator('#drv-edad').blur();
+  check('menor de 18: mensaje en línea', await page.getByText('La edad mínima para rentar es 18 años').isVisible());
+  await page.locator('#drv-edad').fill('32');
   check('campos editables y válidos de nuevo', (await page.locator('[id^="drv-"][aria-invalid="true"]').count()) === 0);
 
   console.log('\n# Simulador de pago');
@@ -117,10 +126,11 @@ try {
   console.log('\n# Confirmacion');
   await page.waitForURL(/\/reserva\//);
   check('espera ~2 s de procesamiento simulado', Date.now() - t0 >= 2000, `${Date.now() - t0} ms`);
-  const loc = page.locator('code', { hasText: 'RENTAFACIL-' });
+  const loc = page.locator('code').filter({ hasText: /^RF[A-Z0-9]{6}$/ });
   await loc.waitFor();
   const locator = (await loc.textContent())?.trim();
-  check('pantalla de confirmacion con localizador RENTAFACIL-', /^RENTAFACIL-[A-Z0-9]+$/.test(locator || ''), locator);
+  check('pantalla de confirmacion con PNR de 8 caracteres (contrato v2)', /^RF[A-Z0-9]{6}$/.test(locator || ''), locator);
+  check('voucher QR en la confirmacion', await page.locator('img[alt^="Voucher QR"]').isVisible());
   console.log(`    localizador: ${locator}  orden: ${page.url().split('/reserva/')[1]}`);
 
   // Limpieza: cancelar la reserva de prueba para no dejar el vehiculo RESERVED

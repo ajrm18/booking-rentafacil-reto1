@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommonModule } from '../../common/common.module';
+import { IntegracionModule } from '../integracion/integracion.module';
 import { AutosService } from './autos.service';
 import { WebhookDispatcher } from './webhook-dispatcher.service';
 import { AutosController } from './autos.controller';
@@ -29,6 +30,7 @@ import { User } from './entities/user.entity';
 @Module({
   imports: [
     CommonModule,
+    IntegracionModule,
     TypeOrmModule.forFeature([
       Depot, Supplier, Vehicle, VehicleImage,
       Hold, OrderPreview, Order, WebhookSubscription, User,
@@ -51,5 +53,6 @@ import { User } from './entities/user.entity';
     StatsAdminController,
   ],
   providers: [AutosService, WebhookDispatcher],
+  exports: [AutosService],
 })
 export class AutosModule {}

@@ -67,7 +67,7 @@ describeDb('POST /api/v1/admin/orders/:id/return (e2e)', () => {
     expect(r.headers['content-type']).toContain('application/problem+json');
   });
 
-  it('el admin registra la devolucion: orden CONFIRMED con returned_at y vehiculo WASHING 24 h', async () => {
+  it('el admin registra la devolucion: orden CONFIRMED con returned_at y vehiculo WASHING 2 h', async () => {
     const antes = Date.now();
     const r = await http.post(`/api/v1/admin/orders/${orderId}/return`).set(admin());
     expect(r.status).toBe(200);
@@ -75,7 +75,7 @@ describeDb('POST /api/v1/admin/orders/:id/return (e2e)', () => {
     const returnedAt = Date.parse(r.body.order.returned_at);
     expect(returnedAt).toBeGreaterThanOrEqual(antes - 1000);
     expect(r.body.vehicle).toMatchObject({ vehicle_id: f.vehicle.vehicle_id, status: 'WASHING' });
-    expect(Date.parse(r.body.vehicle.wash_until) - returnedAt).toBe(24 * HORA);
+    expect(Date.parse(r.body.vehicle.wash_until) - returnedAt).toBe(2 * HORA);
     primerRetorno = r.body;
 
     const enBd = await t.ds.getRepository(Order).findOneByOrFail({ order_id: orderId });

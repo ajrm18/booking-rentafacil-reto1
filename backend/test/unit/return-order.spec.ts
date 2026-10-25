@@ -47,7 +47,7 @@ const confirmed = (): Partial<Order> => ({
 const reserved = (): Partial<Vehicle> => ({ vehicle_id: 'VEH-1001', status: 'RESERVED', wash_until: null });
 
 describe('AutosService.returnOrder', () => {
-  it('mantiene la orden CONFIRMED, guarda returned_at/returned_by_sub y deja el vehiculo en WASHING 24 h', async () => {
+  it('mantiene la orden CONFIRMED, guarda returned_at/returned_by_sub y deja el vehiculo en WASHING 2 h (cooldown Reto 2)', async () => {
     const { service, db } = buildService(confirmed(), reserved());
     const antes = Date.now();
     const r = await service.returnOrder(confirmed().order_id!, ADMIN);
@@ -57,7 +57,7 @@ describe('AutosService.returnOrder', () => {
     expect(db.order!.returned_at!.getTime()).toBeGreaterThanOrEqual(antes);
     expect(db.vehicle!.status).toBe('WASHING');
     const lavado = db.vehicle!.wash_until!.getTime() - db.order!.returned_at!.getTime();
-    expect(lavado).toBe(24 * HORA);
+    expect(lavado).toBe(2 * HORA);
 
     expect(r.order).toMatchObject({ status: 'CONFIRMED', returned_by_sub: ADMIN.sub, locator: 'RENTAFACIL-TEST01' });
     expect(r.order.returned_at).toBe(db.order!.returned_at!.toISOString());
@@ -66,7 +66,7 @@ describe('AutosService.returnOrder', () => {
 
   it('es idempotente: si ya tiene returned_at responde el estado actual sin escribir', async () => {
     const devuelta = { ...confirmed(), returned_at: new Date(Date.now() - HORA), returned_by_sub: 'otro-admin' };
-    const washUntil = new Date(Date.now() + 23 * HORA);
+    const washUntil = new Date(Date.now() + HORA);
     const { service, db, transaction } = buildService(devuelta, { vehicle_id: 'VEH-1001', status: 'WASHING', wash_until: washUntil });
 
     const r = await service.returnOrder(devuelta.order_id!, ADMIN);

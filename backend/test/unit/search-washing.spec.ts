@@ -12,7 +12,7 @@ describeDb('AutosService.search con vehiculos en lavado (WASHING)', () => {
   let t: TestApp;
   let service: AutosService;
   let f: Awaited<ReturnType<typeof createFixtures>>;
-  const washUntil = new Date(Date.now() + 24 * HORA);
+  const washUntil = new Date(Date.now() + 2 * HORA);
 
   beforeAll(async () => {
     t = await createTestApp();

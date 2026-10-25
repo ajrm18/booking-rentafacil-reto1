@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommonModule } from './common/common.module';
 import { AutosModule } from './modules/autos/autos.module';
+import { AutosV2Module } from './modules/autos-v2/autos-v2.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AutosModule } from './modules/autos/autos.module';
     }),
     CommonModule,
     AutosModule,
+    AutosV2Module,
   ],
 })
 export class AppModule {}

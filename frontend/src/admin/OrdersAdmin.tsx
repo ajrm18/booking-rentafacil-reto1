@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { admin, orders as ordersApi } from '../api';
 import type { OrderDetail } from '../types';
 import Modal from '../components/Modal';
@@ -85,7 +86,11 @@ export default function OrdersAdmin() {
                   <td>{new Date(r.creation_date).toLocaleString('es-EC')}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {puedeDevolver && (
-                      <button className="btn btn-success btn-sm" onClick={() => abrirRetorno(r)}>Registrar retorno</button>
+                      <>
+                        {/* Reto 2: check-in de entrega/devolucion con odometro en el mostrador */}
+                        <Link className="btn btn-primary btn-sm" to={`/admin/mostrador?pnr=${r.locator}`}>Mostrador</Link>{' '}
+                        <button className="btn btn-success btn-sm" onClick={() => abrirRetorno(r)}>Registrar retorno</button>
+                      </>
                     )}{' '}
                     {est.activa && r.status === 'CONFIRMED' && (
                       <button className="btn btn-danger btn-sm" onClick={() => cancelar(r.order_id)}>Cancelar</button>
@@ -105,7 +110,7 @@ export default function OrdersAdmin() {
             de la orden <code>{retorno.locator}</code>?
           </p>
           <p className="text-muted" style={{ fontSize: '0.9rem' }}>
-            La orden se mantiene confirmada. El vehículo pasa a <strong>lavado durante 24 horas</strong> y
+            La orden se mantiene confirmada. El vehículo pasa a <strong>limpieza durante 2 horas</strong> y
             luego vuelve a estar disponible automáticamente.
           </p>
           {errRetorno && <div className="alert alert-danger">{errRetorno}</div>}

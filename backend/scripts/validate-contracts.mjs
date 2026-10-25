@@ -2,6 +2,8 @@
  * Valida los contratos OpenAPI del proyecto (sintaxis, $ref y esquema OpenAPI 3.0):
  *   - contracts/autos-openapi.yaml         (GDS Autos Core v1.0.0, oficial)
  *   - contracts/rentafacil-ec-openapi.yaml (interno de RentaFacil EC)
+ *   - contracts/autos-openapi-v2.yaml      (Autos RDA2 v2.0.0, oficial)
+ *   - contracts/rentafacil-ec-openapi-v2.yaml (propio v2: oficial + extensiones)
  * Uso: npm run validate:contracts
  */
 import SwaggerParser from '@apidevtools/swagger-parser';
@@ -9,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../contracts');
-const contratos = ['autos-openapi.yaml', 'rentafacil-ec-openapi.yaml'];
+const contratos = ['autos-openapi.yaml', 'rentafacil-ec-openapi.yaml', 'autos-openapi-v2.yaml', 'rentafacil-ec-openapi-v2.yaml'];
 
 let fallos = 0;
 for (const archivo of contratos) {

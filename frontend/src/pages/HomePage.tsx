@@ -9,19 +9,20 @@ import { enDias, hayErrores, hoy, validarFechas } from '../utils/reservas';
 
 const HERO_IMG = 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f6/BMW_G20_3_Series_Jet_Black_%281%29.jpg/1280px-BMW_G20_3_Series_Jet_Black_%281%29.jpg';
 
+/** code = car_type interno; v2 = categoria del contrato v2 que usa el filtro del catálogo. */
 const CATEGORIAS = [
-  { code: 'Compacto', label: 'Económico', desc: 'Ciudad y bajo consumo' },
-  { code: 'Sedan', label: 'Sedán', desc: 'Confort para carretera' },
-  { code: 'SUV', label: 'SUV', desc: 'Espacio y versatilidad' },
-  { code: 'Camioneta', label: 'Camioneta', desc: '4x4, carga y aventura' },
-  { code: 'Lujo', label: 'Premium', desc: 'Ejecutivo y alta gama' },
+  { code: 'Compacto', v2: 'ECONOMICO', label: 'Económico', desc: 'Ciudad y bajo consumo' },
+  { code: 'Sedan', v2: 'COMPACTO', label: 'Sedán', desc: 'Confort para carretera' },
+  { code: 'SUV', v2: 'SUV', label: 'SUV', desc: 'Espacio y versatilidad' },
+  { code: 'Camioneta', v2: 'VAN', label: 'Camioneta', desc: '4x4, carga y aventura' },
+  { code: 'Lujo', v2: 'PREMIUM', label: 'Premium', desc: 'Ejecutivo y alta gama' },
 ];
 
 export default function HomePage() {
   const nav = useNavigate();
   const [depots, setDepots] = useState<Depot[]>([]);
   const [vehiculos, setVehiculos] = useState<VehicleDetail[]>([]);
-  const [depotId, setDepotId] = useState('');
+  const [ciudad, setCiudad] = useState('');
   const [ini, setIni] = useState(hoy());
   const [fin, setFin] = useState(enDias(3));
   const errFechas = validarFechas(ini, fin);
@@ -30,6 +31,8 @@ export default function HomePage() {
     catalog.depots().then((r) => setDepots(r.data)).catch(() => {});
     catalog.details().then((r) => setVehiculos(r.data)).catch(() => {});
   }, []);
+
+  const ciudades = useMemo(() => [...new Set(depots.map((d) => d.city))].sort(), [depots]);
 
   const desdePorTipo = useMemo(() => {
     const m: Record<string, number> = {};
@@ -43,7 +46,7 @@ export default function HomePage() {
   const buscar = (e: React.FormEvent) => {
     e.preventDefault();
     if (hayErrores(errFechas)) return;
-    const params = new URLSearchParams({ depotId, ini, fin });
+    const params = new URLSearchParams({ ciudad, ini, fin });
     nav(`/catalogo?${params.toString()}`);
   };
 
@@ -66,11 +69,9 @@ export default function HomePage() {
           <form onSubmit={buscar} className="search-bar">
             <div className="search-field">
               <label className="form-label" htmlFor="home-depot">Lugar de recogida</label>
-              <select id="home-depot" className="form-control" value={depotId} onChange={(e) => setDepotId(e.target.value)}>
-                <option value="">Todas las agencias</option>
-                {depots.map((d) => (
-                  <option key={d.depot_id} value={d.depot_id}>{d.name}</option>
-                ))}
+              <select id="home-depot" className="form-control" value={ciudad} onChange={(e) => setCiudad(e.target.value)}>
+                <option value="">Todas las ciudades</option>
+                {ciudades.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div className="search-field">
@@ -100,7 +101,7 @@ export default function HomePage() {
         <h2 style={{ margin: '0.35rem 0 1.5rem' }}>Elige el tipo de vehículo</h2>
         <div className="cat-grid">
           {CATEGORIAS.map((c) => (
-            <Link key={c.code} to={`/catalogo?carType=${c.code}`} className="cat-card">
+            <Link key={c.code} to={`/catalogo?cat=${c.v2}`} className="cat-card">
               <div className="cat-icon"><CarTypeIcon type={c.code} size={84} /></div>
               <div className="cat-label">{c.label}</div>
               <div className="cat-desc">{c.desc}</div>

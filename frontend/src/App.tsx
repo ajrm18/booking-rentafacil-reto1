@@ -16,8 +16,15 @@ import DepotsAdmin from './admin/DepotsAdmin';
 import SuppliersAdmin from './admin/SuppliersAdmin';
 import OrdersAdmin from './admin/OrdersAdmin';
 import UsuariosAdmin from './admin/UsuariosAdmin';
+import FlotaAdmin from './admin/FlotaAdmin';
+import MostradorAdmin from './admin/MostradorAdmin';
+import MantenimientoAdmin from './admin/MantenimientoAdmin';
+import PromocionesAdmin from './admin/PromocionesAdmin';
+import SaludAdmin from './admin/SaludAdmin';
 import PrivateRoute from './components/PrivateRoute';
 import { useAuth } from './context/AuthContext';
+
+const SoloAdmin = ({ children }: { children: JSX.Element }) => <PrivateRoute rol="admin">{children}</PrivateRoute>;
 
 /**
  * Al cambiar de página el foco pasa al contenido principal, para que con Tab el usuario
@@ -62,14 +69,20 @@ export default function App() {
             <PrivateRoute><ReservaConfirmadaPage /></PrivateRoute>
           } />
           <Route path="/admin" element={
-            <PrivateRoute rol="admin"><AdminLayout /></PrivateRoute>
+            <PrivateRoute rol={['admin', 'mechanic']}><AdminLayout /></PrivateRoute>
           }>
-            <Route index element={<AdminDashboard />} />
-            <Route path="vehiculos" element={<VehiculosAdmin />} />
-            <Route path="depots" element={<DepotsAdmin />} />
-            <Route path="suppliers" element={<SuppliersAdmin />} />
-            <Route path="orders" element={<OrdersAdmin />} />
-            <Route path="usuarios" element={<UsuariosAdmin />} />
+            <Route index element={<SoloAdmin><AdminDashboard /></SoloAdmin>} />
+            <Route path="vehiculos" element={<SoloAdmin><VehiculosAdmin /></SoloAdmin>} />
+            <Route path="depots" element={<SoloAdmin><DepotsAdmin /></SoloAdmin>} />
+            <Route path="suppliers" element={<SoloAdmin><SuppliersAdmin /></SoloAdmin>} />
+            <Route path="orders" element={<SoloAdmin><OrdersAdmin /></SoloAdmin>} />
+            <Route path="usuarios" element={<SoloAdmin><UsuariosAdmin /></SoloAdmin>} />
+            {/* Reto 2 (/api/v2): el tecnico (rol MANTENIMIENTO) opera flota, mostrador y mantenimiento */}
+            <Route path="flota" element={<FlotaAdmin />} />
+            <Route path="mostrador" element={<MostradorAdmin />} />
+            <Route path="mantenimiento" element={<MantenimientoAdmin />} />
+            <Route path="promociones" element={<SoloAdmin><PromocionesAdmin /></SoloAdmin>} />
+            <Route path="health" element={<SoloAdmin><SaludAdmin /></SoloAdmin>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

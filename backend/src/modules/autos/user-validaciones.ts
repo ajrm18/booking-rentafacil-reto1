@@ -7,7 +7,7 @@ import { User, UserRole } from './entities/user.entity';
  * Validación de los datos de un usuario, compartida por el CRUD del admin (/admin/users)
  * y el registro público de clientes (/auth/register), para que ambos apliquen las mismas reglas.
  */
-export const ROLES: UserRole[] = ['client', 'admin'];
+export const ROLES: UserRole[] = ['client', 'admin', 'mechanic'];
 export const MIN_PASSWORD = 8;
 
 export type UserBody = Partial<Omit<User, 'password_hash'>> & { password?: string };
@@ -43,7 +43,7 @@ export async function validarUsuario(users: Repository<User>, body: UserBody, id
     out.email = email;
   }
   if (body.role !== undefined) {
-    if (!ROLES.includes(body.role)) throw invalid('role', 'El rol debe ser client o admin');
+    if (!ROLES.includes(body.role)) throw invalid('role', 'El rol debe ser client, admin o mechanic');
     out.role = body.role;
   }
   if (body.password !== undefined && body.password !== '') {

@@ -1,12 +1,67 @@
-# RentaFacil EC - Reto 1 Booking Prototipo
+# RentaFacil EC - Booking Prototipo (Reto 1 + Reto 2)
 
 Implementación del **contrato oficial** `contracts/autos-openapi.yaml` (GDS Autos Core API v1.0.0) para el Reto 1 del proyecto integrador **Booking Prototipo** de la asignatura de Integración de Sistemas de la PUCE.
 
 **Autor:** Anthony Rosero
 **Contrato:** `backend/contracts/autos-openapi.yaml` (copia exacta del repositorio oficial del profesor)
 **Arquitectura Reto 1:** Monolito API-first (NestJS) + Frontend SPA (React) + PostgreSQL
+**Reto 2:** contrato `backend/contracts/autos-openapi-v2.yaml` en `/api/v2`, gRPC `:50051`, CloudEvents a RabbitMQ con Transactional Outbox
 
 ---
+
+## Reto 2 (RDA2) — Proveedor integrado al Booking Prototipo central
+
+Implementación del **contrato oficial v2.0.0** `backend/contracts/autos-openapi-v2.yaml` bajo **`/api/v2`**. El Reto 1 sigue vivo **1:1** en `/api/v1` (compatibilidad hacia atrás que exige el propio contrato v2 en `servers:`).
+
+- **Swagger v2 (contrato oficial):** `/api/v2/docs` · JSON: `/api/v2/docs-json` · contrato propio (oficial + `/admin`): `/api/v2/docs-rentafacil`
+- **Swagger v1:** `/api/docs` (sin cambios)
+- **Arquitectura objetivo:** `docs/rentafacil-reto2.mermaid` · **flujo de integración:** `docs/integracion-booking.md`
+
+| Grupo | Endpoint (`/api/v2`) | Seguridad |
+|---|---|---|
+| Catálogo y búsqueda | `GET /autos`, `POST /autos/search` (franjas de 30 min estrictas), `GET /autos/{id}`, `GET /autos/{id}/coberturas` | pública |
+| Reservas | `GET /autos/orders`, `POST /autos/orders/create` (+ alias `POST /autos/reservas`), `GET /autos/orders/{orderId}` (UUID o PNR), `POST /autos/orders/{orderId}/cancel` (Saga, reembolso 100 %) | JWT |
+| Check-in | `POST /autos/reservas/{id}/checkin` (digital, cliente), `POST /autos/orders/{id}/checkin-entrega` y `/checkin-devolucion` (agente: ADMIN o MANTENIMIENTO) | JWT |
+| Flota | `GET /autos/flota` (cronómetro del cooldown), `POST /autos/{id}/devolucion`, `POST /autos/{id}/mantenimiento/registro` (RBAC MANTENIMIENTO/ADMIN) | pública / JWT |
+| Promociones B2B (§9) | `GET /autos/promociones/contrato`, `PUT /autos/promociones/contrato` (ADMIN) | JWT |
+| Telemetría | `GET /autos/health` (semáforo LED, < 500 ms), `GET /autos/eventos` (feed Outbox) | pública / JWT |
+
+**Reglas transversales:** toda mutación exige `Idempotency-Key` (UUID v4, `400` si falta) y los reintentos devuelven la misma respuesta (tabla `idempotency_records`); `X-Correlation-Id` se propaga (o se genera) y vuelve en la respuesta, los Problem Details y los CloudEvents; errores RFC 7807 con `type, title, status, detail, instance, code, correlation_id, timestamp` (+ `invalid_params`). Edad < 18 → `422 DRIVER_AGE_RESTRICTION`; < 25 o > 70 → recargo de 10 USD/día.
+
+**Máquina de estados de 6 fases:** `DISPONIBLE → RESERVADO → LISTO_PARA_ENTREGAR → ENTREGADO → EN_LIMPIEZA → (EN_MANTENIMIENTO)`. La columna `vehicles.status` sigue en inglés (`AVAILABLE, RESERVED, READY_FOR_PICKUP, DELIVERED, WASHING, MAINTENANCE`) y un mapper la traduce; `/api/v1` sigue viendo `AVAILABLE/RESERVED/WASHING/MAINTENANCE`. **Cooldown de limpieza: 2 h exactas** (antes 24 h): durante ese tiempo el auto no aparece en `/search` ni `/autos/{id}` y reservarlo responde `409 VEHICLE_IN_CLEANING_COOLDOWN`.
+
+**Triple check-in:** digital (licencia, voucher QR fast-track) → entrega en mostrador (licencia física + `km_salida`) → devolución en patio (`km_retorno ≥ km_salida`, combustible, `km_recorridos`, cooldown 2 h y alerta si `kilometraje_actual ≥ proximo_mantenimiento_km`).
+
+**Integración asíncrona y gRPC:**
+- **CloudEvents v1.0 + Transactional Outbox:** cada cambio se guarda en `outbox_events` en la misma transacción; un worker publica cada 5 s al exchange topic `booking.events` de RabbitMQ (`auto.order.confirmed`, `auto.order.cancelled`, `auto.cooldown.started`, `auto.cooldown.ended`, `auto.mantenimiento.alerta`, `stock.actualizado`). Sin `RABBITMQ_URL` el bus queda en **modo degradado** (eventos en el outbox y en el log; `/health` lo informa).
+- **gRPC `inventory.InventoryStockService`** (`backend/src/proto/inventory.proto`, copia de la §2.1 del contrato) en `0.0.0.0:50051` en el mismo proceso que el HTTP: `PushStockUpdate` y `StreamInventoryChanges` alimentan una caché en RAM con TTL de 1 h. Con `BOOKING_GRPC_URL` cada cambio de stock se empuja también al Booking (timeout 5 s + circuit breaker; fallos en `logs/error.log`).
+- **Render Free solo publica el puerto HTTP**: `:50051` no es alcanzable desde Internet. En producción el stock se sincroniza por REST (`/autos`, `/autos/flota`) y por `stock.actualizado`; gRPC funciona en local (`localhost:50051`). `render.yaml` documenta el servicio privado `rentafacil-grpc` para un plan de pago.
+
+**Frontend:** cliente `frontend/src/api/clientV2.ts`; catálogo y checkout con franjas de 30 min y coberturas **BÁSICA ($0)** / **TOTAL ($18/día)**; "Mis reservas" con las 3 fases y sus timestamps, check-in digital y QR; panel admin con **Flota en vivo** (cronómetro, refresco 5 s), **Mostrador y patio**, **Mantenimiento**, **Promociones B2B** y **Salud y eventos** (semáforo + feed Outbox). Cuenta del técnico (rol MANTENIMIENTO): `tecnico@rentafacil.ec` / `Tecnico12345`.
+
+**Variables nuevas del backend:** `RABBITMQ_URL`, `OUTBOX_INTERVAL_MS`, `GRPC_ENABLED`, `GRPC_PORT`, `BOOKING_GRPC_URL`, `BOOKING_GRPC_TLS`, `BOOKING_API_KEY` (ver `backend/.env.example`).
+
+**Pruebas Reto 2:** unitarias (mapper de estados, cooldown 2 h, 409 en limpieza, 422/recargo por edad, idempotencia, gRPC real cliente-servidor, health < 500 ms) y e2e (flujo v2 completo, Saga, promociones, cobertura del contrato 19/19 operaciones, publicación real a RabbitMQ con `TEST_RABBITMQ_URL`). UI en Chrome: `node frontend/scripts/e2e-ui.mjs [URL]` y `node frontend/scripts/e2e-reto2.mjs [WEB] [API_V2]`.
+
+## Integración con Booking Prototipo
+
+Datos para el formulario **"Nuevo Proveedor"** (`Microservicios & Integración` ➔ `Gestión de Proveedores` ➔ `➕ Registrar Proveedor`), tomados de `docs/integracion-booking.md` §5:
+
+| Campo | Valor |
+|---|---|
+| Nombre | `RentaFacil EC` |
+| Equipo | `Anthony Rosero` |
+| URL base de la API | `https://rentafacil-api.onrender.com/api/v2` |
+| Tipo de servicio | `Autos` |
+| gRPC endpoint (si lo pide) | `rentafacil-grpc.onrender.com:50051` (o el que configuremos) |
+| Contrato OpenAPI (referencia) | `/api/v2/docs-json` |
+
+El botón **🔄 Recheck** llama `GET {URL_BASE}/autos/health`, que responde `nodo_id = NODE_AUT_RENTAFACIL`, `nombre_proveedor = RentaFacil EC`, `vertical = AUTOS`, `version = 2.0.0`. **📥 Sincronizar** consume `GET /autos` o `POST /autos/search`. CORS abierto para `https://booking.epn.edu.ec`, `http://localhost:3000`, `http://localhost:5173`, `http://localhost:4000` y el frontend en Vercel; se expone la cabecera `X-Correlation-Id`.
+
+> Nota: en Render Free el gRPC no se publica (ver arriba); el endpoint gRPC de la tabla aplica cuando se despliegue como servicio privado o en local (`localhost:50051`).
+
+---
+
 
 ## 1. Cumplimiento del contrato
 
@@ -70,7 +125,7 @@ Todos bajo prefijo `/api/v1` (equivalente al `servers.url` = `https://.../autos/
   obligatorios y `409` al eliminar un registro con dependencias (ej. una agencia con vehículos).
 - **Devolución de vehículos**: `POST /api/v1/admin/orders/{orderId}/return` (scopes `autos:webhooks` + `autos:book`).
   No cancela la orden: sigue `CONFIRMED` y guarda `returned_at` / `returned_by_sub` (sub del JWT). El vehículo pasa a
-  `WASHING` durante 24 h (`vehicles.wash_until`): `/search` solo lo ofrece si la recogida es posterior a `wash_until`, y
+  `WASHING` durante 2 h (Reto 2; antes 24 h) (`vehicles.wash_until`): `/search` solo lo ofrece si la recogida es posterior a `wash_until`, y
   vuelve solo a `AVAILABLE` al vencer (auto-sanado en cada `/search` y `/details`, sin cron). Idempotente; `404` si la
   orden o el vehículo no existen y `409` si la orden no está `CONFIRMED`. En el panel: botón **Registrar retorno** y badge
   **DEVUELTO el DD/MM/YYYY HH:mm**; en Vehículos, badge amarillo **En lavado** con la fecha de fin.
@@ -309,3 +364,28 @@ Los nombres de tablas, columnas y campos de la API se mantienen en inglés porqu
 **Frontend:** React 18, Vite 5, TypeScript, React Router 6, Axios.
 **Pruebas:** scripts E2E en Node y Playwright (Chrome real).
 **Despliegue:** Render (backend + BD), Vercel (frontend).
+
+---
+
+## Pruebas rápidas para el profesor (docs/integracion-booking.md §4)
+
+```bash
+# 1. Verificar que respondemos saludables
+curl https://rentafacil-api.onrender.com/api/v2/autos/health
+
+# 2. Listar nuestro catálogo
+curl https://rentafacil-api.onrender.com/api/v2/autos
+
+# 3. Buscar vehículos con fecha
+curl -X POST https://rentafacil-api.onrender.com/api/v2/autos/search   -H "Content-Type: application/json"   -H "X-Correlation-Id: test-prof-001"   -d '{
+    "pickup_location": "UIO",
+    "pickup_date": "2026-11-01",
+    "pickup_time": "10:00",
+    "dropoff_date": "2026-11-04",
+    "dropoff_time": "10:00",
+    "driver_age": 32
+  }'
+
+# 4. Ver el contrato OpenAPI servido por nuestro backend
+curl https://rentafacil-api.onrender.com/api/v2/docs-json
+```

@@ -151,12 +151,14 @@ async function bootstrap() {
   await corregirOrtografia(ds);
   await sembrarUsuarios(ds);
   await sembrarReservasHistoricas(ds);
+  await sembrarOdometros(ds);
 
   console.log('OK - Datos iniciales listos');
   console.log('Cuentas demo:');
   console.log('  Admin:   admin@rentafacil.ec / Admin12345');
   console.log('  Cliente: maria@example.com   / Cliente12345');
   console.log('  Cliente: carlos@example.com  / Cliente12345');
+  console.log('  Técnico: tecnico@rentafacil.ec / Tecnico12345 (rol MANTENIMIENTO en /api/v2)');
   console.log('Uso: POST /api/v1/auth/token para obtener JWT con scopes.');
   await app.close();
   process.exit(0);
@@ -197,6 +199,8 @@ async function sembrarUsuarios(ds: DataSource) {
     { email: 'admin@rentafacil.ec', first_name: 'Anthony', last_name: 'Rosero', role: 'admin' as const, password: 'Admin12345' },
     { email: 'maria@example.com', first_name: 'María', last_name: 'Maldonado', role: 'client' as const, password: 'Cliente12345', phone: '0983563584' },
     { email: 'carlos@example.com', first_name: 'Carlos', last_name: 'Muñoz', role: 'client' as const, password: 'Cliente12345', phone: '0984445566' },
+    // Reto 2: agente de patio/mostrador (rol MANTENIMIENTO del contrato v2)
+    { email: 'tecnico@rentafacil.ec', first_name: 'Roberto', last_name: 'Paredes', role: 'mechanic' as const, password: 'Tecnico12345' },
   ];
   let creados = 0;
   for (const u of demo) {
@@ -286,6 +290,28 @@ async function sembrarReservasHistoricas(ds: DataSource) {
     creadas++;
   }
   if (creadas) console.log(`  ${creadas} reservas históricas creadas`);
+}
+
+/**
+ * Reto 2: odómetro inicial de la flota demo (las columnas nuevas nacen en 0 km). Solo se fija si
+ * sigue en 0, así no se pisan las lecturas de los check-in. VEH-1007 queda cerca del umbral de
+ * 10 000 km para mostrar la alerta preventiva en el panel.
+ */
+async function sembrarOdometros(ds: DataSource) {
+  const km: Record<string, number> = {
+    'VEH-1001': 5200, 'VEH-1002': 8300, 'VEH-1003': 12400, 'VEH-1004': 3100, 'VEH-1005': 7600,
+    'VEH-1006': 15800, 'VEH-1007': 9850, 'VEH-1008': 2100, 'VEH-1009': 4300, 'VEH-1010': 1800,
+  };
+  let n = 0;
+  for (const [id, valor] of Object.entries(km)) {
+    // El próximo mantenimiento queda en el siguiente múltiplo de 10 000 km
+    const r = await ds.getRepository(Vehicle).update(
+      { vehicle_id: id, kilometraje_actual: 0 },
+      { kilometraje_actual: valor, proximo_mantenimiento_km: (Math.floor(valor / 10000) + 1) * 10000 },
+    );
+    n += r.affected ?? 0;
+  }
+  if (n) console.log(`  odómetro inicial fijado en ${n} vehículos`);
 }
 
 bootstrap().catch((e) => { console.error('Error en seed:', e); process.exit(1); });

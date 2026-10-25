@@ -19,7 +19,7 @@ import { validarUsuario } from './user-validaciones';
 class TokenDto {
   @IsString() email: string;
   @IsString() password: string;
-  @IsOptional() @IsIn(['client', 'admin']) role?: 'client' | 'admin';
+  @IsOptional() @IsIn(['client', 'admin', 'mechanic']) role?: 'client' | 'admin' | 'mechanic';
 }
 
 /**
@@ -39,6 +39,8 @@ class RegisterDto {
 export const SCOPES_POR_ROL = {
   admin: ['autos:read', 'autos:book', 'autos:cancel', 'autos:webhooks'],
   client: ['autos:read', 'autos:book', 'autos:cancel'],
+  // Tecnico de patio/mantenimiento (rol MANTENIMIENTO de /api/v2): solo lectura en v1
+  mechanic: ['autos:read'],
 } as const;
 
 @ApiTags('Auth')

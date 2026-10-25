@@ -119,7 +119,7 @@ export interface ReturnResponse {
 
 export interface AuthUser {
   email: string;
-  role: 'admin' | 'client';
+  role: 'admin' | 'client' | 'mechanic';
   first_name?: string;
   last_name?: string;
 }
@@ -130,7 +130,7 @@ export interface AdminUser {
   first_name: string;
   last_name: string;
   email: string;
-  role: 'admin' | 'client';
+  role: 'admin' | 'client' | 'mechanic';
   phone: string | null;
   national_id: string | null;
   created_at: string;

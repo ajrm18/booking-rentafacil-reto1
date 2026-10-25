@@ -1,7 +1,8 @@
 import {
   ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger,
 } from '@nestjs/common';
-import { Response } from 'express';
+import { Request, Response } from 'express';
+import { correlationIdDe } from '../correlation';
 
 /** Valores permitidos de ProblemDetails.code (enum de autos-openapi.yaml). */
 const PROBLEM_CODES = new Set([
@@ -13,11 +14,18 @@ const PROBLEM_CODES = new Set([
 /** Segundos sugeridos en Retry-After para 409 (el contrato declara la cabecera en ProblemDetails409). */
 const RETRY_AFTER_CONFLICT_S = 5;
 
+/** Codigo por defecto de /api/v2 segun el estado HTTP (contrato v2: 400, 401, 403, 404, 409, 422, 500, 503). */
+const CODIGO_V2: Record<number, string> = {
+  400: 'VALIDATION_FAILED', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'CONFLICT',
+  422: 'UNPROCESSABLE_ENTITY', 429: 'RATE_LIMIT_EXCEEDED', 500: 'INTERNAL_ERROR', 503: 'SERVICE_UNAVAILABLE',
+};
+
 /**
- * Filtro global que serializa cualquier excepcion como application/problem+json (RFC 7807),
- * alineado con components.responses.ProblemDetails* de autos-openapi.yaml.
- * El schema ProblemDetails tiene additionalProperties: false, por eso solo se emiten
- * type, title, status, detail, code e invalidParams.
+ * Filtro global que serializa cualquier excepcion como application/problem+json (RFC 7807).
+ * /api/v1: alineado con components.responses.ProblemDetails* de autos-openapi.yaml; ese schema
+ * tiene additionalProperties: false, por eso solo se emiten type, title, status, detail, code e invalidParams.
+ * /api/v2: components.schemas.ProblemDetails de autos-openapi-v2.yaml (detail obligatorio, instance,
+ * code libre, correlation_id, timestamp e invalid_params).
  */
 @Catch()
 export class ProblemDetailsFilter implements ExceptionFilter {
@@ -26,6 +34,8 @@ export class ProblemDetailsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const res = ctx.getResponse<Response>();
+    const req = ctx.getRequest<Request>();
+    const v2 = (req?.originalUrl ?? req?.url ?? '').startsWith('/api/v2');
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let body: any = {
@@ -59,12 +69,31 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       this.logger.error(exception.message, exception.stack);
       body.detail = exception.message;
     }
+    // En v2 solo se respeta el code que venga explicito en un Problem Details; el resto sale del estado HTTP
+    if (v2 && !(exception instanceof HttpException && (exception.getResponse() as any)?.code)) body.code = undefined;
 
     if ((status === 409 || status === 429) && !res.getHeader('Retry-After')) {
       res.setHeader('Retry-After', String(status === 409 ? RETRY_AFTER_CONFLICT_S : 60));
     }
 
-    res.status(status).type('application/problem+json').json(this.sanitize(body, status));
+    res.status(status).type('application/problem+json').json(v2 ? this.sanitizeV2(body, status, req) : this.sanitize(body, status));
+  }
+
+  private sanitizeV2(b: any, status: number, req: Request) {
+    const { type, title, status: _s, detail, code, invalidParams, invalid_params, message: _m, error: _e, statusCode: _c, ...extra } = b ?? {};
+    const params = invalid_params ?? invalidParams;
+    return {
+      type: String(type ?? `https://booking.epn.edu.ec/errors/${status}`).replace('https://api.booking-hub.com/', 'https://booking.epn.edu.ec/'),
+      title: String(title ?? 'Error'),
+      status,
+      detail: String(detail ?? title ?? 'Error'),
+      instance: req.originalUrl ?? req.url,
+      code: typeof code === 'string' && code ? code : CODIGO_V2[status] ?? 'INTERNAL_ERROR',
+      correlation_id: correlationIdDe(req) || null,
+      timestamp: new Date().toISOString(),
+      ...(Array.isArray(params) && { invalid_params: params }),
+      ...extra,
+    };
   }
 
   private sanitize(b: any, status: number) {

@@ -1,13 +1,37 @@
-import { BadRequestException, INestApplication, ValidationError, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, INestApplication, RequestMethod, ValidationError, ValidationPipe } from '@nestjs/common';
+import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { ProblemDetailsFilter } from './common/filters/http-exception.filter';
+import { CORRELATION_HEADER, correlationMiddleware } from './common/correlation';
+
+/**
+ * Origenes del Booking Prototipo central (docs/integracion-booking.md §3.2) + frontend propio.
+ */
+export function corsOptions(frontendUrl?: string): CorsOptions {
+  return {
+    origin: [
+      frontendUrl || 'http://localhost:5173',
+      'https://booking.epn.edu.ec',
+      'http://localhost:3000',
+      'http://localhost:4000',
+      'http://localhost:5173',
+      /\.vercel\.app$/,
+    ],
+    credentials: true,
+    exposedHeaders: ['Cache-Control', 'X-API-Deprecation-Date', 'Retry-After', CORRELATION_HEADER],
+  };
+}
 
 /**
  * Prefijo, validacion y formato de errores comunes a main.ts y a las pruebas e2e,
  * para que los tests levanten la app exactamente como produccion.
  */
 export function configureApp(app: INestApplication): void {
-  // Prefijo global: /api/v1 (alineado con servers.url = https://.../autos/v1)
-  app.setGlobalPrefix('api/v1');
+  // X-Correlation-Id en todas las respuestas (trazabilidad end-to-end del Reto 2)
+  app.use(correlationMiddleware);
+
+  // Prefijo global: /api/v1 (alineado con servers.url = https://.../autos/v1). Los controladores
+  // del contrato v2 declaran su ruta completa /api/v2/autos/... y quedan fuera del prefijo.
+  app.setGlobalPrefix('api/v1', { exclude: [{ path: 'api/v2/(.*)', method: RequestMethod.ALL }] });
 
   app.useGlobalPipes(
     new ValidationPipe({

@@ -1,0 +1,38 @@
+syntax = "proto3";
+package inventory;
+
+service InventoryStockService {
+  rpc PushStockUpdate (StockUpdateMessage) returns (StockUpdateAck);
+  rpc StreamInventoryChanges (stream StockChangeEvent) returns (StreamSummary);
+}
+
+message StockUpdateMessage {
+  string service_id = 1;      // "autos" o código del nodo (ej. "NODE_AUT_LOCAL")
+  string item_id = 2;         // ID del vehículo (ej. "auto-spark-01")
+  string date = 3;            // Fecha en formato YYYY-MM-DD (ej. "2026-10-25")
+  string time_slot = 4;       // Franja horaria (ej. "10:00")
+  int32 available_units = 5;  // 1 si DISPONIBLE, 0 si RESERVADO/EN_LIMPIEZA
+  int64 timestamp = 6;        // Epoch en milisegundos
+}
+
+message StockUpdateAck {
+  bool success = 1;
+  string message = 2;
+  int64 processed_at = 3;
+}
+
+message StockChangeEvent {
+  string event_id = 1;
+  string service_id = 2;
+  string item_id = 3;
+  string date = 4;
+  string time_slot = 5;
+  int32 delta = 6;            // +1 o -1
+  int64 timestamp = 7;
+}
+
+message StreamSummary {
+  int32 total_events_processed = 1;
+  bool is_synchronized = 2;
+  string last_sync_hash = 3;
+}

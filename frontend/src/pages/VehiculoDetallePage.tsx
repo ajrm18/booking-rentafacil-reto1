@@ -1,28 +1,54 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { account, catalog, orders } from '../api';
-import { filtrarEmail, filtrarNombre, filtrarTelefono, msgEmail, msgNombre, msgTelefono, sinErrores } from '../utils/validaciones';
-import type { OrderPreviewResponse, VehicleDetail } from '../types';
+import { account, catalog } from '../api';
+import { autosV2, FRANJAS_30_MIN, ordenesV2, uuidv4 } from '../api/clientV2';
+import { filtrarDigitos, filtrarEmail, filtrarNombre, filtrarTelefono, msgEmail, msgNombre, msgTelefono, sinErrores } from '../utils/validaciones';
+import type { VehicleDetail } from '../types';
+import type { CoberturaOpcion, TipoCobertura } from '../types/v2';
 import { useAuth } from '../context/AuthContext';
 import { PHOTO_CREDITS } from '../data/photoCredits';
 import { ETIQUETA_CATEGORIA } from '../components/VehiculoCard';
 import PaymentSimulatorModal from '../components/PaymentSimulatorModal';
 import FechaError from '../components/FechaError';
-import { diasEntre, enDias, etiqueta, hayErrores, hoy, validarFechas } from '../utils/reservas';
+import { enDias, etiqueta, hayErrores, hoy, validarFechas } from '../utils/reservas';
+import { useFranjaVigente } from '../utils/v2';
 
-/** El contrato exige driver.age; la UI no lo solicita y se envía un valor estándar. */
-const EDAD_CONDUCTOR = 25;
+/** Recargo del contrato v2 para conductores menores de 25 o mayores de 70 años (USD por día). */
+const RECARGO_EDAD_DIARIO = 10;
 
-const EXTRAS_DISPONIBLES = [
-  { code: 'GPS', label: 'GPS ($5/día)' },
-  { code: 'SILLA_BEBE', label: 'Silla de bebé ($5/día)' },
-  { code: 'CONDUCTOR_ADICIONAL', label: 'Conductor adicional ($5/día)' },
+/** Coberturas por defecto mientras responde GET /api/v2/autos/{id}/coberturas. */
+const COBERTURAS_DEFECTO: CoberturaOpcion[] = [
+  { tipo: 'BASICA', nombre: 'Protección Básica (Incluida)', costo_adicional_diario: 0, franquicia: 1200, deposito_garantia: 500, descripcion: '', beneficios: [] },
+  { tipo: 'TOTAL', nombre: 'Cobertura Total / Protección Premium', costo_adicional_diario: 18, franquicia: 0, deposito_garantia: 0, descripcion: '', beneficios: [] },
 ];
 
-const ETIQUETAS_DESGLOSE: Record<string, string> = {
-  base: 'Alquiler', extras: 'Extras', taxes: 'Impuestos', days: 'Días', price_per_day: 'Precio por día',
-};
+/** Días facturados igual que el backend: bloques de 24 h desde la franja de recogida, redondeando hacia arriba. */
+function diasFacturados(ini: string, hIni: string, fin: string, hFin: string): number {
+  const a = Date.parse(`${ini}T${hIni}:00-05:00`), b = Date.parse(`${fin}T${hFin}:00-05:00`);
+  if (isNaN(a) || isNaN(b) || b <= a) return 0;
+  return Math.max(1, Math.ceil((b - a) / 86_400_000));
+}
 
+function msgEdad(v: string): string | undefined {
+  if (!v) return 'La edad es obligatoria';
+  const n = Number(v);
+  if (!Number.isInteger(n) || n > 99) return 'Ingresa una edad válida';
+  if (n < 18) return 'La edad mínima para rentar es 18 años';
+  return undefined;
+}
+
+const soloLicencia = (x: string) => x.replace(/[^A-Za-z0-9-]/g, '');
+const soloEdad = (x: string) => filtrarDigitos(x, 2);
+
+/** Campos del formulario del conductor: [clave, etiqueta, autocomplete, maxLength, filtro, type]. */
+const CAMPOS_CONDUCTOR = [
+  ['first_name', 'Nombre *', 'given-name', 60, filtrarNombre, 'text'],
+  ['last_name', 'Apellido *', 'family-name', 60, filtrarNombre, 'text'],
+  ['email', 'Correo electrónico *', 'email', 160, filtrarEmail, 'email'],
+  ['phone_number', 'Teléfono *', 'tel', 20, filtrarTelefono, 'tel'],
+  ['licencia', 'Licencia de conducir *', 'off', 20, soloLicencia, 'text'],
+  ['edad', 'Edad del conductor *', 'off', 2, soloEdad, 'text'],
+] as const;
 
 export default function VehiculoDetallePage() {
   const { id } = useParams();
@@ -34,21 +60,17 @@ export default function VehiculoDetallePage() {
   const [imgActiva, setImgActiva] = useState(0);
   const [ini, setIni] = useState(params.get('ini') || hoy());
   const [fin, setFin] = useState(params.get('fin') || enDias(3));
-  const [extras, setExtras] = useState<string[]>([]);
-  const [searchToken, setSearchToken] = useState(params.get('token') || '');
-  // El search_token lleva las fechas de la busqueda que lo emitio: si el usuario cambia las
-  // fechas aquí hay que pedir uno nuevo, o el preview cobraría los días anteriores.
-  const fechasDelToken = useRef({ ini, fin });
-  useEffect(() => {
-    if (ini !== fechasDelToken.current.ini || fin !== fechasDelToken.current.fin) setSearchToken('');
-  }, [ini, fin]);
+  const [horaIni, setHoraIni] = useState(params.get('hIni') || '10:00');
+  const [horaFin, setHoraFin] = useState(params.get('hFin') || '10:00');
+  const [coberturas, setCoberturas] = useState<CoberturaOpcion[]>(COBERTURAS_DEFECTO);
+  const [cobertura, setCobertura] = useState<TipoCobertura>('BASICA');
 
-  const [preview, setPreview] = useState<OrderPreviewResponse | null>(null);
-  const [driver, setDriver] = useState({ first_name: '', last_name: '', email: '', phone_number: '' });
-  // preview -> payment (modal simulador) -> creating (POST /orders/create) -> /reserva/:id
-  const [step, setStep] = useState<'form' | 'preview' | 'payment' | 'creating'>('form');
+  const [driver, setDriver] = useState({ first_name: '', last_name: '', email: '', phone_number: '', licencia: '', edad: '' });
+  // form -> datos (conductor) -> payment (modal simulador) -> creating (POST /api/v2/autos/orders/create) -> /reserva/:id
+  const [step, setStep] = useState<'form' | 'datos' | 'payment' | 'creating'>('form');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  // Una Idempotency-Key por intento de compra: si la red falla y el cliente reintenta, no se duplica la reserva
+  const claveCompra = useRef(uuidv4());
 
   useEffect(() => {
     if (!id) return;
@@ -56,6 +78,7 @@ export default function VehiculoDetallePage() {
       const d = r.data[0];
       if (d) setV(d);
     }).catch(() => {});
+    autosV2.coberturas(id).then((r) => setCoberturas(r.opciones)).catch(() => {});
   }, [id]);
 
   // Autollenado: los datos del conductor se toman del perfil del usuario (siguen siendo editables).
@@ -65,6 +88,7 @@ export default function VehiculoDetallePage() {
     if (!user) return;
     account.profile().then((p) => {
       setDriver((d) => ({
+        ...d,
         first_name: d.first_name || p.first_name || '',
         last_name: d.last_name || p.last_name || '',
         email: d.email || p.email || user.email,
@@ -75,11 +99,13 @@ export default function VehiculoDetallePage() {
   }, [user]);
 
   // Validación del formulario del conductor (mismas reglas que el backend)
-  const errDriver = {
+  const errDriver: Record<string, string | undefined> = {
     first_name: msgNombre(driver.first_name, 'El nombre'),
     last_name: msgNombre(driver.last_name, 'El apellido'),
     email: msgEmail(driver.email),
-    phone_number: msgTelefono(driver.phone_number),
+    phone_number: msgTelefono(driver.phone_number, true),
+    licencia: /^[A-Za-z0-9-]{5,20}$/.test(driver.licencia) ? undefined : 'Número de licencia de 5 a 20 caracteres',
+    edad: msgEdad(driver.edad),
   };
   const driverValido = sinErrores(errDriver);
   const [tocado, setTocado] = useState<Record<string, boolean>>({});
@@ -87,65 +113,53 @@ export default function VehiculoDetallePage() {
 
   const imagenes = (v?.images && v.images.length > 0) ? v.images : [v?.main_image_url || ''];
 
+  const franjasIni = useFranjaVigente(ini, horaIni, setHoraIni);
   const errFechas = validarFechas(ini, fin);
-  const fechasInvalidas = hayErrores(errFechas);
-  const dias = fechasInvalidas ? 0 : diasEntre(ini, fin);
-  const precioEstimado = v ? dias * Number(v.price_per_day) + extras.length * 5 * dias : 0;
+  if (!errFechas.ini && franjasIni.length === 0) errFechas.ini = 'Ya no quedan franjas de recogida hoy; elige otra fecha';
+  const dias = hayErrores(errFechas) ? 0 : diasFacturados(ini, horaIni, fin, horaFin);
+  const fechasInvalidas = dias === 0;
+  const opcion = coberturas.find((c) => c.tipo === cobertura);
+  const edadNum = Number(driver.edad);
+  const recargo = driver.edad && !errDriver.edad && (edadNum < 25 || edadNum > 70) ? RECARGO_EDAD_DIARIO * dias : 0;
+  const base = v ? dias * Number(v.price_per_day) : 0;
+  const costoCobertura = (opcion?.costo_adicional_diario ?? 0) * dias;
+  const total = base + costoCobertura + recargo;
 
-  const toggleExtra = (code: string) => {
-    setExtras(extras.includes(code) ? extras.filter((e) => e !== code) : [...extras, code]);
-  };
-
-  const asegurarSearchToken = async (): Promise<string> => {
-    if (searchToken) return searchToken;
-    if (!v) throw new Error('Vehículo no disponible');
-    const res = await catalog.search({
-      booker: { country: 'ec' }, currency: 'USD', driver: { age: EDAD_CONDUCTOR },
-      route: {
-        pickup: { datetime: `${ini}T10:00:00Z`, location: {} },
-        dropoff: { datetime: `${fin}T10:00:00Z`, location: {} },
-      },
-    });
-    fechasDelToken.current = { ini, fin };
-    setSearchToken(res.search_token);
-    return res.search_token;
-  };
-
-  const previsualizar = async () => {
-    setError(''); setLoading(true);
-    try {
-      if (!user) { nav('/login', { state: { from: window.location.pathname + window.location.search } }); return; }
-      if (!v || fechasInvalidas) return;
-      const tok = await asegurarSearchToken();
-      const hold = await orders.hold(v.vehicle_id, tok, EDAD_CONDUCTOR);
-      const prev = await orders.preview(v.vehicle_id, tok, hold.hold_id, extras);
-      setPreview(prev);
-      setStep('preview');
-    } catch (e: any) {
-      setError(e?.message || 'Error al preparar la reserva');
-    } finally { setLoading(false); }
+  const continuar = () => {
+    setError('');
+    if (!user) { nav('/login', { state: { from: window.location.pathname + window.location.search } }); return; }
+    if (!v || fechasInvalidas) return;
+    setStep('datos');
   };
 
   /** "Confirmar reserva" abre el simulador de pago; la orden se crea al pagar. */
   const abrirPago = () => {
-    setTocado({ first_name: true, last_name: true, email: true, phone_number: true });
+    setTocado({ first_name: true, last_name: true, email: true, phone_number: true, licencia: true, edad: true });
     if (!driverValido) return;
     setError(''); setStep('payment');
   };
 
   /** Llamado por el simulador con un payment_reference valido. Si falla, el modal muestra el error. */
   const pagarYCrear = async (paymentReference: string) => {
-    if (!preview) return;
+    if (!v) return;
     setStep('creating');
     try {
-      const orden = await orders.create(preview.data.order_preview_id, paymentReference, driver);
-      // Guardar order_id en localStorage para que MisReservas del cliente lo recupere
-      const prev: string[] = JSON.parse(localStorage.getItem('rf_myorders') || '[]');
-      if (!prev.includes(orden.order_id)) prev.unshift(orden.order_id);
-      localStorage.setItem('rf_myorders', JSON.stringify(prev.slice(0, 50)));
+      const orden = await ordenesV2.crear({
+        vehicle_id: v.vehicle_id,
+        pickup_date: ini, dropoff_date: fin, hora_recogida: horaIni, hora_devolucion: horaFin,
+        tipo_cobertura: cobertura,
+        pickup_location: v.depot?.name,
+        payment_reference: paymentReference,
+        conductor: {
+          nombre: `${driver.first_name} ${driver.last_name}`.trim(),
+          email: driver.email, telefono: driver.phone_number, licencia_conducir: driver.licencia, edad: edadNum,
+        },
+      }, claveCompra.current);
       nav(`/reserva/${orden.order_id}`);
     } catch (e: any) {
       setStep('payment');
+      // Rechazo de negocio (409 auto tomado o en limpieza, 422 edad): la siguiente compra usa otra clave
+      if (e?.response?.status && e.response.status < 500) claveCompra.current = uuidv4();
       throw new Error(e?.message || 'Error al crear la reserva');
     }
   };
@@ -230,7 +244,7 @@ export default function VehiculoDetallePage() {
           </div>
         </div>
 
-        {/* Reserva */}
+        {/* Reserva (contrato v2: franjas de 30 min + cobertura) */}
         <aside>
           <div className="card" style={{ position: 'sticky', top: '84px', borderTop: '3px solid var(--brand)' }}>
             <div className="card-body">
@@ -245,116 +259,117 @@ export default function VehiculoDetallePage() {
 
                   {error && <div className="alert alert-danger mt-2">{error}</div>}
 
-                  <div className="form-group mt-2">
-                    <label className="form-label" htmlFor="det-ini">Fecha de inicio</label>
-                    <input id="det-ini" type="date" className="form-control" min={hoy()}
-                      value={ini} onChange={(e) => { setIni(e.target.value); setSearchToken(''); }}
-                      aria-invalid={!!errFechas.ini} aria-describedby={errFechas.ini ? 'det-ini-err' : undefined} />
-                    <FechaError id="det-ini-err" mensaje={errFechas.ini} />
+                  <div className="mt-2" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '0.5rem' }}>
+                    <div>
+                      <label className="form-label" htmlFor="det-ini">Recogida</label>
+                      <input id="det-ini" type="date" className="form-control" min={hoy()}
+                        value={ini} onChange={(e) => setIni(e.target.value)}
+                        aria-invalid={!!errFechas.ini} aria-describedby={errFechas.ini ? 'det-ini-err' : undefined} />
+                    </div>
+                    <div>
+                      <label className="form-label" htmlFor="det-hini">Hora</label>
+                      <select id="det-hini" className="form-control" value={horaIni} onChange={(e) => setHoraIni(e.target.value)}>
+                        {franjasIni.map((h) => <option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="det-fin">Fecha de fin</label>
-                    <input id="det-fin" type="date" className="form-control" min={ini || hoy()}
-                      max={ini ? enDias(90, new Date(`${ini}T00:00:00`)) : undefined}
-                      value={fin} onChange={(e) => { setFin(e.target.value); setSearchToken(''); }}
-                      aria-invalid={!!errFechas.fin} aria-describedby={errFechas.fin ? 'det-fin-err' : undefined} />
-                    <FechaError id="det-fin-err" mensaje={errFechas.fin} />
+                  <FechaError id="det-ini-err" mensaje={errFechas.ini} />
+                  <div className="mt-1" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '0.5rem' }}>
+                    <div>
+                      <label className="form-label" htmlFor="det-fin">Devolución</label>
+                      <input id="det-fin" type="date" className="form-control" min={ini || hoy()}
+                        max={ini ? enDias(90, new Date(`${ini}T00:00:00`)) : undefined}
+                        value={fin} onChange={(e) => setFin(e.target.value)}
+                        aria-invalid={!!errFechas.fin} aria-describedby={errFechas.fin ? 'det-fin-err' : undefined} />
+                    </div>
+                    <div>
+                      <label className="form-label" htmlFor="det-hfin">Hora</label>
+                      <select id="det-hfin" className="form-control" value={horaFin} onChange={(e) => setHoraFin(e.target.value)}>
+                        {FRANJAS_30_MIN.map((h) => <option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <FechaError id="det-fin-err" mensaje={errFechas.fin} />
+                  <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                    Horarios en franjas de 30 minutos (hora de Ecuador).
                   </div>
 
-                  <div className="form-group">
-                    <label className="form-label">Extras</label>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                      {EXTRAS_DISPONIBLES.map((ex) => (
-                        <label key={ex.code} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.9rem' }}>
-                          <input type="checkbox" checked={extras.includes(ex.code)}
-                            onChange={() => toggleExtra(ex.code)} />
-                          {ex.label}
+                  <fieldset style={{ border: 0, padding: 0, margin: '1rem 0' }}>
+                    <legend className="form-label">Cobertura</legend>
+                    <div style={{ display: 'grid', gap: '0.5rem' }}>
+                      {coberturas.map((c) => (
+                        <label key={c.tipo} style={{
+                          display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', fontSize: '0.88rem',
+                          border: cobertura === c.tipo ? '2px solid var(--brand)' : '1px solid var(--border)',
+                          borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.75rem',
+                        }}>
+                          <input type="radio" name="cobertura" value={c.tipo} checked={cobertura === c.tipo}
+                            onChange={() => setCobertura(c.tipo)} style={{ marginTop: 3 }} />
+                          <span>
+                            <b>{c.nombre}</b>{' '}
+                            <span className="text-muted">{c.costo_adicional_diario > 0 ? `+$${c.costo_adicional_diario.toFixed(2)}/día` : 'incluida ($0)'}</span>
+                            <span className="text-muted" style={{ display: 'block', fontSize: '0.78rem' }}>
+                              Franquicia ${c.franquicia.toFixed(2)} · Depósito ${c.deposito_garantia.toFixed(2)}
+                            </span>
+                          </span>
                         </label>
                       ))}
                     </div>
-                  </div>
+                  </fieldset>
 
                   {dias > 0 && (
                     <div className="summary">
                       <div className="flex-between"><span>Días</span><span>{dias}</span></div>
-                      <div className="flex-between"><span>Vehículo</span><span>${(dias * Number(v.price_per_day)).toFixed(2)}</span></div>
-                      {extras.length > 0 && (
-                        <div className="flex-between"><span>Extras ({extras.length})</span><span>${(extras.length * 5 * dias).toFixed(2)}</span></div>
-                      )}
+                      <div className="flex-between"><span>Vehículo</span><span>${base.toFixed(2)}</span></div>
+                      {costoCobertura > 0 && <div className="flex-between"><span>Cobertura total</span><span>${costoCobertura.toFixed(2)}</span></div>}
                       <div className="flex-between summary-total">
-                        <span>Subtotal</span><span>${precioEstimado.toFixed(2)}</span>
+                        <span>Total estimado</span><span>${(base + costoCobertura).toFixed(2)}</span>
                       </div>
                       <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                        (impuestos calculados en el siguiente paso)
+                        Impuestos incluidos. Conductores menores de 25 o mayores de 70 años pagan ${RECARGO_EDAD_DIARIO}/día de recargo.
                       </div>
                     </div>
                   )}
 
-                  <button className="btn btn-primary btn-block" onClick={previsualizar} disabled={loading || fechasInvalidas || dias <= 0}>
-                    {loading ? 'Bloqueando...' : user ? 'Continuar' : 'Ingresar para reservar'}
+                  <button className="btn btn-primary btn-block" onClick={continuar} disabled={fechasInvalidas}>
+                    {user ? 'Continuar' : 'Ingresar para reservar'}
                   </button>
                 </>
               )}
 
-              {step !== 'form' && preview && (
+              {step !== 'form' && (
                 <>
-                  <h3 style={{ marginTop: 0 }}>Confirmar reserva</h3>
-                  <div className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-                    ID de previsualización: <code>{preview.data.order_preview_id}</code>
-                  </div>
-
+                  <h3 style={{ marginTop: 0 }}>Datos del conductor</h3>
                   {error && <div className="alert alert-danger">{error}</div>}
-
-                  <div className="summary">
-                    {Object.entries(preview.data.breakdown).map(([k, val]) => (
-                      <div key={k} className="flex-between">
-                        <span>{ETIQUETAS_DESGLOSE[k] || k}</span><span>{k === 'days' ? String(val) : typeof val === 'number' ? `$${Number(val).toFixed(2)}` : String(val)}</span>
-                      </div>
-                    ))}
-                    <div className="flex-between summary-total">
-                      <span>Total</span><span>${preview.data.total_price.toFixed(2)} {preview.data.currency}</span>
-                    </div>
-                  </div>
-
                   {autollenado && (
                     <div className="text-muted" style={{ fontSize: '0.8rem', marginBottom: '0.5rem' }}>
                       Datos tomados de tu cuenta; puedes editarlos si reservas para otra persona.
                     </div>
                   )}
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="drv-first_name">Nombre *</label>
-                    <input id="drv-first_name" className="form-control" value={driver.first_name}
-                      onBlur={() => tocar('first_name')}
-                      aria-invalid={tocado.first_name && !!errDriver.first_name} aria-describedby={tocado.first_name && errDriver.first_name ? 'drv-first_name-err' : undefined} autoComplete="given-name" maxLength={60}
-                      onChange={(e) => setDriver({ ...driver, first_name: filtrarNombre(e.target.value) })} />
-                    <FechaError id="drv-first_name-err" mensaje={tocado.first_name ? errDriver.first_name : undefined} />
+                  {CAMPOS_CONDUCTOR.map(([k, label, auto, max, filtro, tipo]) => (
+                    <div className="form-group" key={k}>
+                      <label className="form-label" htmlFor={`drv-${k}`}>{label}</label>
+                      <input id={`drv-${k}`} type={tipo} className="form-control" value={driver[k]} autoComplete={auto} maxLength={max}
+                        inputMode={k === 'edad' ? 'numeric' : undefined}
+                        onBlur={() => tocar(k)}
+                        aria-invalid={tocado[k] && !!errDriver[k]} aria-describedby={tocado[k] && errDriver[k] ? `drv-${k}-err` : undefined}
+                        onChange={(e) => setDriver({ ...driver, [k]: filtro(e.target.value) })} />
+                      <FechaError id={`drv-${k}-err`} mensaje={tocado[k] ? errDriver[k] : undefined} />
+                    </div>
+                  ))}
+
+                  <div className="summary">
+                    <div className="flex-between"><span>Vehículo ({dias} {dias === 1 ? 'día' : 'días'})</span><span>${base.toFixed(2)}</span></div>
+                    <div className="flex-between"><span>{opcion?.nombre ?? cobertura}</span><span>${costoCobertura.toFixed(2)}</span></div>
+                    {recargo > 0 && <div className="flex-between"><span>Recargo por edad</span><span>${recargo.toFixed(2)}</span></div>}
+                    <div className="flex-between summary-total"><span>Total</span><span>${total.toFixed(2)} USD</span></div>
+                    {opcion && opcion.deposito_garantia > 0 && (
+                      <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                        Depósito de garantía retenido en mostrador: ${opcion.deposito_garantia.toFixed(2)}
+                      </div>
+                    )}
                   </div>
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="drv-last_name">Apellido *</label>
-                    <input id="drv-last_name" className="form-control" value={driver.last_name}
-                      onBlur={() => tocar('last_name')}
-                      aria-invalid={tocado.last_name && !!errDriver.last_name} aria-describedby={tocado.last_name && errDriver.last_name ? 'drv-last_name-err' : undefined} autoComplete="family-name" maxLength={60}
-                      onChange={(e) => setDriver({ ...driver, last_name: filtrarNombre(e.target.value) })} />
-                    <FechaError id="drv-last_name-err" mensaje={tocado.last_name ? errDriver.last_name : undefined} />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="drv-email">Correo electrónico *</label>
-                    <input type="email" id="drv-email" className="form-control" value={driver.email}
-                      onBlur={() => tocar('email')}
-                      aria-invalid={tocado.email && !!errDriver.email} aria-describedby={tocado.email && errDriver.email ? 'drv-email-err' : undefined} autoComplete="email" maxLength={160}
-                      onChange={(e) => setDriver({ ...driver, email: filtrarEmail(e.target.value) })} />
-                    <FechaError id="drv-email-err" mensaje={tocado.email ? errDriver.email : undefined} />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="drv-phone_number">Teléfono</label>
-                    <input type="tel" inputMode="tel" placeholder="0983563584" id="drv-phone_number" className="form-control" value={driver.phone_number}
-                      onBlur={() => tocar('phone_number')}
-                      aria-invalid={tocado.phone_number && !!errDriver.phone_number} aria-describedby={tocado.phone_number && errDriver.phone_number ? 'drv-phone_number-err' : undefined} autoComplete="tel" maxLength={20}
-                      onChange={(e) => setDriver({ ...driver, phone_number: filtrarTelefono(e.target.value) })} />
-                    <FechaError id="drv-phone_number-err" mensaje={tocado.phone_number ? errDriver.phone_number : undefined} />
-                  </div>
-                  <button className="btn btn-primary btn-block" onClick={abrirPago}
-                    disabled={step !== 'preview'}>
+                  <button className="btn btn-primary btn-block" onClick={abrirPago} disabled={step !== 'datos'}>
                     Confirmar reserva
                   </button>
                   <button className="btn btn-outline btn-block mt-1" onClick={() => setStep('form')}>
@@ -367,12 +382,12 @@ export default function VehiculoDetallePage() {
         </aside>
       </div>
 
-      {(step === 'payment' || step === 'creating') && preview && (
+      {(step === 'payment' || step === 'creating') && (
         <PaymentSimulatorModal
-          total={preview.data.total_price}
-          currency={preview.data.currency}
+          total={Number(total.toFixed(2))}
+          currency="USD"
           onPay={pagarYCrear}
-          onClose={() => setStep('preview')}
+          onClose={() => setStep('datos')}
         />
       )}
 

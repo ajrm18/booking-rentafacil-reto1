@@ -8,7 +8,7 @@ import {
   filtrarDigitos, filtrarEmail, filtrarNombre, filtrarTelefono, msgCedula, msgEmail, msgNombre, msgTelefono,
 } from '../utils/validaciones';
 
-const ROLES: Record<AdminUser['role'], string> = { client: 'Cliente', admin: 'Administrador' };
+const ROLES: Record<AdminUser['role'], string> = { client: 'Cliente', admin: 'Administrador', mechanic: 'Técnico (Mantenimiento)' };
 const MIN_PASSWORD = 8;
 
 const vacio = { first_name: '', last_name: '', email: '', phone: '', national_id: '', role: 'client' as AdminUser['role'], password: '' };
@@ -202,6 +202,7 @@ export default function UsuariosAdmin() {
                 <select {...attrs('role')} value={form.role} onChange={(e) => set('role', e.target.value)}>
                   <option value="client">Cliente</option>
                   <option value="admin">Administrador</option>
+                  <option value="mechanic">Técnico (Mantenimiento)</option>
                 </select>
               ))}
               {campo('password', editando ? 'Nueva contraseña' : 'Contraseña *', (

@@ -6,6 +6,7 @@ services:
     rootDir: backend
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start:render
+    healthCheckPath: /api/v2/autos/health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -19,6 +20,39 @@ services:
         value: production
       - key: FRONTEND_URL
         sync: false
+      # Reto 2 — integracion con el Booking Prototipo central
+      # RabbitMQ compartido (exchange booking.events). Vacio = bus deshabilitado: los CloudEvents
+      # quedan en el outbox (GET /api/v2/autos/eventos) y en el log; /health lo informa.
+      - key: RABBITMQ_URL
+        sync: false
+      # InventoryStockService del Booking (ej. booking.epn.edu.ec:50051) para PushStockUpdate.
+      - key: BOOKING_GRPC_URL
+        sync: false
+      # X-API-Key (ApiKeyAuth del contrato v2) para llamadas M2M del Booking. Vacio = solo JWT.
+      - key: BOOKING_API_KEY
+        sync: false
+      # Servidor gRPC propio en el mismo proceso. En Render Free solo se publica el puerto HTTP,
+      # asi que :50051 no es alcanzable desde Internet: ahi el stock se sincroniza por REST
+      # (/api/v2/autos, /api/v2/autos/flota) y RabbitMQ (stock.actualizado).
+      - key: GRPC_ENABLED
+        value: "true"
+      - key: GRPC_PORT
+        value: "50051"
+
+  # gRPC publico (grpc-service): Render Free no permite servicios privados (pserv) ni expone puertos
+  # TCP/HTTP2 adicionales en un Web Service. Con un plan de pago se agregaria asi, con la misma
+  # imagen y GRPC_ENABLED=true, y el Booking apuntaria a rentafacil-grpc:50051 por la red privada:
+  #
+  # - type: pserv
+  #   name: rentafacil-grpc
+  #   env: node
+  #   plan: starter
+  #   rootDir: backend
+  #   buildCommand: npm ci --include=dev && npm run build
+  #   startCommand: node dist/main.js
+  #   envVars:
+  #     - key: GRPC_PORT
+  #       value: "50051"
 
 databases:
   - name: rentafacil-db

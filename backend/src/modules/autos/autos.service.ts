@@ -1,12 +1,16 @@
 import {
   BadRequestException, ConflictException, Injectable,
-  NotFoundException,
+  NotFoundException, Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { WebhookDispatcher, WebhookEvent } from './webhook-dispatcher.service';
-import { Vehicle, WASH_HOURS } from './entities/vehicle.entity';
+import { calcularDisponibleDesde, Vehicle } from './entities/vehicle.entity';
+import { aEstadoV1 } from './estado-vehiculo.mapper';
+import { InventarioService } from '../integracion/inventario.service';
+import { OutboxService } from '../integracion/outbox.service';
+import { EVENTOS } from '../integracion/nodo';
 import { Depot } from './entities/depot.entity';
 import { Supplier } from './entities/supplier.entity';
 import { VehicleImage } from './entities/vehicle-image.entity';
@@ -75,6 +79,10 @@ export class AutosService {
     @InjectRepository(OrderPreview) private readonly previews: Repository<OrderPreview>,
     @InjectRepository(Order) private readonly orders: Repository<Order>,
     @InjectRepository(WebhookSubscription) private readonly webhooks: Repository<WebhookSubscription>,
+    // Reto 2: eventos CloudEvents y stock gRPC tambien para las operaciones de /api/v1 (opcionales
+    // para que las pruebas unitarias del Reto 1 sigan construyendo el servicio a mano)
+    @Optional() private readonly inventario?: InventarioService,
+    @Optional() private readonly outbox?: OutboxService,
   ) {}
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -414,6 +422,12 @@ export class AutosService {
 
     const detail = this.toOrderDetail(saved);
     this.fireWebhook('CAR_ORDER_CONFIRMED', saved.order_id, detail);
+    await this.outbox?.registrar(null, EVENTOS.ORDEN_CONFIRMADA, {
+      order_id: saved.order_id, pnr: saved.locator, auto_id: vehicle.vehicle_id,
+      total_price: Number(saved.total_price), nuevo_estado_auto: 'RESERVADO', canal: 'api/v1',
+    }, { subject: saved.order_id });
+    await this.inventario?.registrarCambio(null, vehicle, 'order.confirmed');
+    this.inventario?.notificarStock(vehicle);
     return detail;
   }
 
@@ -461,6 +475,10 @@ export class AutosService {
       if (order.status === 'CANCELLED') {
         throw this.conflict('CANCELLATION_NOT_ALLOWED', 'La orden ya estaba cancelada');
       }
+      if (order.checkin_entrega_at && !order.returned_at) {
+        // Reto 2: con las llaves entregadas el auto esta en uso; se cierra con el check-in de devolucion
+        throw this.conflict('CANCELLATION_NOT_ALLOWED', 'El vehículo ya fue entregado al cliente; registre su devolución');
+      }
       order.status = 'CANCELLED';
       await this.orders.save(order);
 
@@ -470,8 +488,14 @@ export class AutosService {
       if (vehicle) {
         vehicle.status = 'AVAILABLE';
         await this.vehicles.save(vehicle);
+        await this.inventario?.registrarCambio(null, vehicle, 'order.cancelled');
+        this.inventario?.notificarStock(vehicle);
       }
       this.fireWebhook('CAR_ORDER_CANCELLED', order.order_id, { locator: order.locator, status: order.status });
+      await this.outbox?.registrar(null, EVENTOS.ORDEN_CANCELADA, {
+        order_id: order.order_id, pnr: order.locator, auto_id: order.vehicle_id,
+        refund_amount: Number(order.total_price), estado_restituido: vehicle ? 'DISPONIBLE' : null, canal: 'api/v1',
+      }, { subject: order.order_id });
       return { status: 'CANCELLED', order_id: order.order_id };
     });
   }
@@ -482,8 +506,8 @@ export class AutosService {
 
   /**
    * Registra la devolucion del vehiculo sin cancelar la orden (sigue CONFIRMED) y deja el
-   * vehiculo en WASHING durante WASH_HOURS. Idempotente: si la orden ya tiene returned_at
-   * responde el estado actual sin modificar nada.
+   * vehiculo en WASHING durante el cooldown de 2 h (COOLDOWN_MINUTES). Idempotente: si la orden ya
+   * tiene returned_at responde el estado actual sin modificar nada.
    */
   async returnOrder(orderId: string, auth: AuthContext): Promise<any> {
     const order = await this.orders.findOne({ where: { order_id: orderId } });
@@ -503,14 +527,21 @@ export class AutosService {
     const otraReserva = (await this.busyVehicleIds(order.order_id)).has(vehicle.vehicle_id);
 
     const now = new Date();
-    const washUntil = new Date(now.getTime() + WASH_HOURS * 60 * 60 * 1000);
-    await this.orders.manager.transaction(async (m) => {
+    const washUntil = calcularDisponibleDesde(now);
+    const enLavado = await this.orders.manager.transaction(async (m) => {
       // UPDATE condicionado a returned_at IS NULL: dos peticiones simultaneas no registran dos devoluciones
       const r = await m.update(Order, { order_id: order.order_id, returned_at: IsNull() },
         { returned_at: now, returned_by_sub: auth.sub });
-      if (!r.affected || otraReserva) return;
+      if (!r.affected || otraReserva) return false;
       await m.update(Vehicle, { vehicle_id: vehicle.vehicle_id }, { status: 'WASHING', wash_until: washUntil });
+      await this.outbox?.registrar(m, EVENTOS.COOLDOWN_INICIADO, {
+        auto_id: vehicle.vehicle_id, estado: 'EN_LIMPIEZA', cooldown_minutos: 120,
+        disponible_desde: washUntil.toISOString(), order_id: order.order_id, canal: 'api/v1',
+      }, { subject: vehicle.vehicle_id });
+      await this.inventario?.registrarCambio(m, { vehicle_id: vehicle.vehicle_id, status: 'WASHING' }, 'cooldown.started');
+      return true;
     });
+    if (enLavado) this.inventario?.notificarStock({ vehicle_id: vehicle.vehicle_id, status: 'WASHING' });
     return this.returnResponse(await this.orders.findOne({ where: { order_id: orderId } }));
   }
 
@@ -523,15 +554,18 @@ export class AutosService {
         returned_at: this.iso(order.returned_at),
         returned_by_sub: order.returned_by_sub,
       },
-      vehicle: v ? { vehicle_id: v.vehicle_id, status: v.status, wash_until: this.iso(v.wash_until) } : null,
+      // /api/v1 sigue viendo los estados del Reto 1 (las fases nuevas del v2 cuentan como RESERVED)
+      vehicle: v ? { vehicle_id: v.vehicle_id, status: aEstadoV1(v.status), wash_until: this.iso(v.wash_until) } : null,
     };
   }
 
   /**
-   * Auto-sanado sin worker externo (Render Free no tiene cron): cada /search y /details
-   * devuelve a AVAILABLE los vehiculos cuyo lavado ya termino.
+   * Auto-sanado ademas del worker del outbox (cada 5 s): cada /search y /details devuelve a
+   * AVAILABLE los vehiculos cuyo lavado ya termino.
    */
   async releaseFinishedWashes(): Promise<number> {
+    // Con la infraestructura del Reto 2 se emiten auto.cooldown.ended y stock.actualizado
+    if (this.inventario) return this.inventario.liberarCooldownsVencidos();
     const r = await this.vehicles.createQueryBuilder()
       .update(Vehicle)
       .set({ status: 'AVAILABLE', wash_until: null })

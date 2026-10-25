@@ -26,5 +26,5 @@ npm run test:e2e
 ## Devolución de vehículos
 `POST /api/v1/admin/orders/{orderId}/return` registra la devolución sin cancelar la orden
 (sigue `CONFIRMED`, con `returned_at` y `returned_by_sub`). El vehículo pasa a `WASHING` durante
-24 h (`wash_until`); `/search` lo ofrece solo para recogidas desde `wash_until` y vuelve solo a
+2 h (Reto 2; antes 24 h) (`wash_until`); `/search` lo ofrece solo para recogidas desde `wash_until` y vuelve solo a
 `AVAILABLE` al vencer (auto-sanado en cada `/search` y `/details`, sin worker).

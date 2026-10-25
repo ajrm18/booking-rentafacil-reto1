@@ -1,29 +1,33 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { catalog } from '../api';
-import type { CarSearchItem, Depot, VehicleDetail } from '../types';
+import { autosV2, FRANJAS_30_MIN } from '../api/clientV2';
+import type { Depot, VehicleDetail } from '../types';
+import type { AutoVehiculoCardV2 } from '../types/v2';
 import VehiculoCard from '../components/VehiculoCard';
 import FechaError from '../components/FechaError';
 import { diasEntre, enDias, hayErrores, hoy, validarFechas } from '../utils/reservas';
+import { CATEGORIAS_V2, useFranjaVigente } from '../utils/v2';
 
-/** El contrato exige driver.age; la UI no lo solicita y se envía un valor estándar. */
-const EDAD_CONDUCTOR = 25;
-
+/**
+ * Catálogo sobre POST /api/v2/autos/search (franjas de 30 min, exclusión de autos en limpieza).
+ * Las fichas (fotos, specs) siguen saliendo de /api/v1/details.
+ */
 export default function CatalogoPage() {
   const [params, setParams] = useSearchParams();
   const [depots, setDepots] = useState<Depot[]>([]);
   const [detalles, setDetalles] = useState<Record<string, VehicleDetail>>({});
-  const [resultados, setResultados] = useState<CarSearchItem[]>([]);
-  const [searchToken, setSearchToken] = useState('');
+  const [resultados, setResultados] = useState<AutoVehiculoCardV2[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Filtros locales
-  const [depotId, setDepotId] = useState(params.get('depotId') || '');
+  const [ciudad, setCiudad] = useState(params.get('ciudad') || '');
   const [ini, setIni] = useState(params.get('ini') || hoy());
   const [fin, setFin] = useState(params.get('fin') || enDias(3));
-  const [carType, setCarType] = useState(params.get('carType') || '');
-  const [transmision, setTransmision] = useState(params.get('tr') || '');
+  const [horaIni, setHoraIni] = useState(params.get('hIni') || '10:00');
+  const [horaFin, setHoraFin] = useState(params.get('hFin') || '10:00');
+  const [categoria, setCategoria] = useState(params.get('cat') || 'ALL');
+  const [transmision, setTransmision] = useState(params.get('tr') || 'ALL');
 
   useEffect(() => {
     catalog.depots().then((r) => setDepots(r.data)).catch(() => {});
@@ -34,43 +38,23 @@ export default function CatalogoPage() {
     }).catch(() => {});
   }, []);
 
-  const depot = useMemo(() => depots.find((d) => String(d.depot_id) === depotId), [depots, depotId]);
+  const ciudades = useMemo(() => [...new Set(depots.map((d) => d.city))].sort(), [depots]);
   const dias = useMemo(() => diasEntre(ini, fin), [ini, fin]);
+  const franjasIni = useFranjaVigente(ini, horaIni, setHoraIni);
   const errFechas = validarFechas(ini, fin);
+  if (!errFechas.ini && franjasIni.length === 0) errFechas.ini = 'Ya no quedan franjas de recogida hoy; elige otra fecha';
   const fechasInvalidas = hayErrores(errFechas);
 
   const buscar = async () => {
     setLoading(true); setError('');
     try {
-      const filters: any = {};
-      if (carType) filters.car_types = [carType];
-      if (transmision) filters.transmission = [transmision];
-      const res = await catalog.search({
-        booker: { country: 'ec' },
-        currency: 'USD',
-        driver: { age: EDAD_CONDUCTOR },
-        route: {
-          pickup: {
-            datetime: `${ini}T10:00:00Z`,
-            location: depot
-              ? (depot.location.airport
-                  ? { airport: depot.location.airport }
-                  : { city_id: depot.location.city_id })
-              : {},
-          },
-          dropoff: {
-            datetime: `${fin}T10:00:00Z`,
-            location: depot
-              ? (depot.location.airport
-                  ? { airport: depot.location.airport }
-                  : { city_id: depot.location.city_id })
-              : {},
-          },
-        },
-        filters: Object.keys(filters).length ? filters : undefined,
-      });
-      setResultados(res.data);
-      setSearchToken(res.search_token);
+      // El contrato exige pickup_location: "Cualquier ciudad" consulta cada ciudad con agencias
+      const destinos = ciudad ? [ciudad] : ciudades;
+      const respuestas = await Promise.all(destinos.map((c) => autosV2.buscar({
+        pickup_location: c, pickup_date: ini, pickup_time: horaIni, dropoff_date: fin, dropoff_time: horaFin,
+        category: categoria, transmission: transmision,
+      })));
+      setResultados(respuestas.flatMap((r) => r.data).sort((a, b) => a.precio_total - b.precio_total));
     } catch (e: any) {
       setError(e?.message || 'Error en la búsqueda');
       setResultados([]);
@@ -78,38 +62,45 @@ export default function CatalogoPage() {
   };
 
   useEffect(() => {
-    // Sincronizar URL y ejecutar la búsqueda (solo con fechas válidas: se validan antes de llamar al backend)
     const next = new URLSearchParams();
-    if (depotId) next.set('depotId', depotId);
-    next.set('ini', ini); next.set('fin', fin);
-    if (carType) next.set('carType', carType);
-    if (transmision) next.set('tr', transmision);
+    if (ciudad) next.set('ciudad', ciudad);
+    next.set('ini', ini); next.set('fin', fin); next.set('hIni', horaIni); next.set('hFin', horaFin);
+    if (categoria !== 'ALL') next.set('cat', categoria);
+    if (transmision !== 'ALL') next.set('tr', transmision);
     setParams(next, { replace: true });
     if (fechasInvalidas) { setResultados([]); return; }
-    if (Object.keys(detalles).length > 0) buscar();
+    if (Object.keys(detalles).length > 0 && ciudades.length > 0) buscar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depotId, ini, fin, carType, transmision, Object.keys(detalles).length]);
+  }, [ciudad, ini, fin, horaIni, horaFin, categoria, transmision, Object.keys(detalles).length, ciudades.length]);
 
-  const limpiar = () => { setDepotId(''); setCarType(''); setTransmision(''); };
+  const limpiar = () => { setCiudad(''); setCategoria('ALL'); setTransmision('ALL'); setHoraIni('10:00'); setHoraFin('10:00'); };
+  const franja = (id: string, label: string, valor: string, set: (v: string) => void, opciones = FRANJAS_30_MIN) => (
+    <div>
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <select id={id} className="form-control" value={valor} onChange={(e) => set(e.target.value)}>
+        {opciones.map((h) => <option key={h} value={h}>{h}</option>)}
+      </select>
+    </div>
+  );
 
   return (
     <div className="container" style={{ padding: '2rem 1rem' }}>
       <div className="eyebrow">Flota disponible</div>
       <h1 style={{ margin: '0.35rem 0 0.25rem' }}>Catálogo de vehículos</h1>
       <p className="text-muted" style={{ marginTop: 0 }}>
-        Filtra por agencia, fechas, categoría y transmisión.
+        Filtra por ciudad, fechas y franjas de 30 minutos, categoría y transmisión.
       </p>
 
       <div className="card mb-3">
         <div className="card-body" style={{
           display: 'grid', gap: '0.75rem',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
         }}>
           <div>
-            <label className="form-label" htmlFor="cat-depot">Recogida</label>
-            <select id="cat-depot" className="form-control" value={depotId} onChange={(e) => setDepotId(e.target.value)}>
-              <option value="">Cualquier agencia</option>
-              {depots.map((d) => <option key={d.depot_id} value={d.depot_id}>{d.name}</option>)}
+            <label className="form-label" htmlFor="cat-ciudad">Recogida</label>
+            <select id="cat-ciudad" className="form-control" value={ciudad} onChange={(e) => setCiudad(e.target.value)}>
+              <option value="">Cualquier ciudad</option>
+              {ciudades.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div>
@@ -119,6 +110,7 @@ export default function CatalogoPage() {
               aria-invalid={!!errFechas.ini} aria-describedby={errFechas.ini ? 'cat-ini-err' : undefined} />
             <FechaError id="cat-ini-err" mensaje={errFechas.ini} />
           </div>
+          {franja('cat-hini', 'Hora de recogida', horaIni, setHoraIni, franjasIni)}
           <div>
             <label className="form-label" htmlFor="cat-fin">Fecha de fin</label>
             <input id="cat-fin" type="date" className="form-control" value={fin} min={ini || hoy()}
@@ -127,23 +119,20 @@ export default function CatalogoPage() {
               aria-invalid={!!errFechas.fin} aria-describedby={errFechas.fin ? 'cat-fin-err' : undefined} />
             <FechaError id="cat-fin-err" mensaje={errFechas.fin} />
           </div>
+          {franja('cat-hfin', 'Hora de devolución', horaFin, setHoraFin)}
           <div>
             <label className="form-label" htmlFor="cat-tipo">Categoría</label>
-            <select id="cat-tipo" className="form-control" value={carType} onChange={(e) => setCarType(e.target.value)}>
-              <option value="">Todas</option>
-              <option value="Compacto">Económico</option>
-              <option value="Sedan">Sedán</option>
-              <option value="SUV">SUV</option>
-              <option value="Camioneta">Camioneta</option>
-              <option value="Lujo">Premium</option>
+            <select id="cat-tipo" className="form-control" value={categoria} onChange={(e) => setCategoria(e.target.value)}>
+              <option value="ALL">Todas</option>
+              {Object.entries(CATEGORIAS_V2).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
           <div>
             <label className="form-label" htmlFor="cat-tr">Transmisión</label>
             <select id="cat-tr" className="form-control" value={transmision} onChange={(e) => setTransmision(e.target.value)}>
-              <option value="">Todas</option>
-              <option value="manual">Manual</option>
-              <option value="automatica">Automática</option>
+              <option value="ALL">Todas</option>
+              <option value="MANUAL">Manual</option>
+              <option value="AUTOMATICO">Automática</option>
             </select>
           </div>
           <div style={{ display: 'flex', alignItems: 'end' }}>
@@ -162,7 +151,7 @@ export default function CatalogoPage() {
         <div className="text-muted text-center" style={{ padding: '2rem' }}>Buscando...</div>
       ) : resultados.length === 0 ? (
         <div className="card"><div className="card-body text-center text-muted">
-          No hay vehículos disponibles con esos filtros.
+          No hay vehículos disponibles con esos filtros. Los vehículos recién devueltos vuelven a la oferta tras 2 horas de limpieza.
         </div></div>
       ) : (
         <>
@@ -172,8 +161,8 @@ export default function CatalogoPage() {
               const d = detalles[r.vehicle_id];
               if (!d) return null;
               return (
-                <VehiculoCard key={r.vehicle_id} vehiculo={d} precioTotal={r.price} dias={dias}
-                  extraQuery={`token=${searchToken}&ini=${ini}&fin=${fin}`} />
+                <VehiculoCard key={r.vehicle_id} vehiculo={d} precioTotal={r.precio_total} dias={dias}
+                  extraQuery={`ini=${ini}&fin=${fin}&hIni=${encodeURIComponent(horaIni)}&hFin=${encodeURIComponent(horaFin)}`} />
               );
             })}
           </div>

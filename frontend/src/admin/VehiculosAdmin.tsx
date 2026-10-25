@@ -5,10 +5,12 @@ import { fechaHora } from '../utils/reservas';
 
 /** Etiquetas visibles; los valores (AVAILABLE, Sedan...) son los que guarda la API. */
 const ESTADOS_VEHICULO: Record<string, string> = {
-  AVAILABLE: 'Disponible', RESERVED: 'Reservado', WASHING: 'En lavado', MAINTENANCE: 'En mantenimiento', INACTIVE: 'Inactivo',
+  AVAILABLE: 'Disponible', RESERVED: 'Reservado', READY_FOR_PICKUP: 'Listo para entregar', DELIVERED: 'Entregado',
+  WASHING: 'En limpieza (2 h)', MAINTENANCE: 'En mantenimiento', INACTIVE: 'Inactivo',
 };
 const BADGE_ESTADO: Record<string, string> = {
-  AVAILABLE: 'badge-success', RESERVED: 'badge-muted', WASHING: 'badge-warning', MAINTENANCE: 'badge-danger', INACTIVE: 'badge-muted',
+  AVAILABLE: 'badge-success', RESERVED: 'badge-muted', READY_FOR_PICKUP: 'badge-muted', DELIVERED: 'badge-muted',
+  WASHING: 'badge-warning', MAINTENANCE: 'badge-danger', INACTIVE: 'badge-muted',
 };
 const ETIQUETA_CATEGORIA_ADMIN: Record<string, string> = { Sedan: 'Sedán' };
 

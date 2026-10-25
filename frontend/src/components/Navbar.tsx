@@ -54,6 +54,7 @@ export default function Navbar() {
           <NavLink to="/catalogo" className="nav-link">Catálogo</NavLink>
           {user && <NavLink to="/mis-reservas" className="nav-link">Mis reservas</NavLink>}
           {user?.role === 'admin' && <NavLink to="/admin" className="nav-link">Admin</NavLink>}
+          {user?.role === 'mechanic' && <NavLink to="/admin/flota" className="nav-link">Patio y taller</NavLink>}
           {user ? (
             <>
               <span style={{ fontSize: '0.85rem', color: '#9a9da3' }}>{user.first_name || user.email}</span>
@@ -89,6 +90,7 @@ export default function Navbar() {
           <NavLink to="/catalogo" className="nav-link-mobile" onClick={() => setOpen(false)}>Catálogo</NavLink>
           {user && <NavLink to="/mis-reservas" className="nav-link-mobile" onClick={() => setOpen(false)}>Mis reservas</NavLink>}
           {user?.role === 'admin' && <NavLink to="/admin" className="nav-link-mobile" onClick={() => setOpen(false)}>Admin</NavLink>}
+          {user?.role === 'mechanic' && <NavLink to="/admin/flota" className="nav-link-mobile" onClick={() => setOpen(false)}>Patio y taller</NavLink>}
           {user ? (
             <button className="btn nav-btn-outline mt-1" onClick={doLogout}>Salir ({user.email})</button>
           ) : (

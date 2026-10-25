@@ -4,6 +4,7 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
+    "assets": ["proto/*.proto"],
     "tsConfigPath": "tsconfig.build.json"
   }
 }

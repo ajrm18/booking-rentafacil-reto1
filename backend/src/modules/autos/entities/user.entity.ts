@@ -1,6 +1,10 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
-export type UserRole = 'client' | 'admin';
+/**
+ * 'mechanic' es el rol MANTENIMIENTO del contrato v2 (RBAC RDA2 §5). Se guarda con un nombre corto
+ * porque la columna es varchar(10) y ampliarla haria que TypeORM la recree (perdiendo los roles).
+ */
+export type UserRole = 'client' | 'admin' | 'mechanic';
 
 /**
  * Usuarios que pueden obtener un JWT en POST /auth/token (Authorization Server local del Reto 1).

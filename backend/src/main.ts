@@ -1,9 +1,54 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger } from '@nestjs/common';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { INestApplication, Logger } from '@nestjs/common';
+import { SwaggerModule, DocumentBuilder, OpenAPIObject } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import * as yaml from 'js-yaml';
 import { AppModule } from './app.module';
-import { configureApp } from './app.setup';
+import { configureApp, corsOptions } from './app.setup';
+import { AutosModule } from './modules/autos/autos.module';
+import { GRPC_PACKAGE, inventoryProtoPath, PROTO_LOADER_OPTIONS } from './modules/integracion/grpc/proto-path';
+import { grpcServidor } from './modules/integracion/grpc/grpc-estado';
+
+/** Lee un contrato YAML de backend/contracts (cwd = backend en Render y en local). */
+function leerContrato(nombre: string): OpenAPIObject | null {
+  const ruta = [join(process.cwd(), 'contracts', nombre), join(__dirname, '..', 'contracts', nombre)].find(existsSync);
+  if (!ruta) { Logger.warn(`No se encontro contracts/${nombre}`, 'Bootstrap'); return null; }
+  return yaml.load(readFileSync(ruta, 'utf8')) as OpenAPIObject;
+}
+
+/**
+ * Contrato v2 oficial servido tal cual en /api/v2/docs (+ /api/v2/docs-json), y el contrato propio
+ * (oficial + endpoints /admin de RentaFacil) en /api/v2/docs-rentafacil.
+ */
+function swaggerV2(app: INestApplication): void {
+  const opciones = { swaggerOptions: { persistAuthorization: true, docExpansion: 'none' } };
+  const oficial = leerContrato('autos-openapi-v2.yaml');
+  if (oficial) SwaggerModule.setup('api/v2/docs', app, oficial, { ...opciones, customSiteTitle: 'RentaFacil EC - Autos API v2.0.0 (contrato oficial RDA2)' });
+  const propio = leerContrato('rentafacil-ec-openapi-v2.yaml');
+  if (propio) SwaggerModule.setup('api/v2/docs-rentafacil', app, propio, { ...opciones, customSiteTitle: 'RentaFacil EC - Contrato propio v2' });
+}
+
+/** Servidor gRPC InventoryStockService en 0.0.0.0:50051, en el mismo proceso que el HTTP. */
+async function grpc(app: INestApplication): Promise<void> {
+  if (process.env.GRPC_ENABLED === 'false') return;
+  const url = process.env.GRPC_URL || `0.0.0.0:${process.env.GRPC_PORT || 50051}`;
+  try {
+    app.connectMicroservice<MicroserviceOptions>({
+      transport: Transport.GRPC,
+      options: { package: GRPC_PACKAGE, protoPath: inventoryProtoPath(), url, loader: PROTO_LOADER_OPTIONS },
+    });
+    await app.startAllMicroservices();
+    grpcServidor.escuchando = url;
+    Logger.log(`gRPC inventory.InventoryStockService escuchando en ${url}`, 'Bootstrap');
+  } catch (e: any) {
+    // El HTTP sigue funcionando: el stock se sincroniza por REST (/autos, /autos/flota) y RabbitMQ
+    grpcServidor.error = e?.message ?? String(e);
+    Logger.warn(`gRPC deshabilitado: ${grpcServidor.error}`, 'Bootstrap');
+  }
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,16 +57,8 @@ async function bootstrap() {
   // Prefijo /api/v1, ValidationPipe y filtro Problem Details (compartido con las pruebas e2e)
   configureApp(app);
 
-  app.enableCors({
-    origin: [
-      config.get<string>('FRONTEND_URL') || 'http://localhost:5173',
-      'http://localhost:5173',
-      'http://localhost:3000',
-      /\.vercel\.app$/,
-    ],
-    credentials: true,
-    exposedHeaders: ['Cache-Control', 'X-API-Deprecation-Date', 'Retry-After'],
-  });
+  // Frontend propio + origenes del Booking Prototipo central (docs/integracion-booking.md §3.2)
+  app.enableCors(corsOptions(config.get<string>('FRONTEND_URL')));
 
   // Metadatos y seguridad copiados de contracts/autos-openapi.yaml (info + components.securitySchemes)
   const swagger = new DocumentBuilder()
@@ -80,7 +117,8 @@ async function bootstrap() {
     .addTag('Admin - Webhooks', 'CRUD de la tabla webhook_subscriptions')
     .addTag('Admin - Dashboard', 'Estadisticas agregadas')
     .build();
-  const document = SwaggerModule.createDocument(app, swagger);
+  // Solo el modulo del Reto 1: el v2 se documenta con su YAML oficial
+  const document = SwaggerModule.createDocument(app, swagger, { include: [AutosModule] });
   // Igual que el contrato: los endpoints publicos (header X-Affiliate-Id) y /auth/token
   // anulan la seguridad global con `security: []`.
   for (const [path, item] of Object.entries(document.paths)) {
@@ -98,10 +136,12 @@ async function bootstrap() {
     },
     customSiteTitle: 'RentaFacil EC - Autos API Docs',
   });
+  swaggerV2(app);
+  await grpc(app);
 
   const port = config.get<number>('PORT') || 3000;
   await app.listen(port);
   Logger.log(`GDS Autos API - RentaFacil EC corriendo en puerto ${port}`, 'Bootstrap');
-  Logger.log(`Swagger: /api/docs`, 'Bootstrap');
+  Logger.log(`Swagger v1: /api/docs | Swagger v2: /api/v2/docs (JSON: /api/v2/docs-json)`, 'Bootstrap');
 }
 bootstrap();

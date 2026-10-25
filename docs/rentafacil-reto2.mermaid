@@ -1,0 +1,241 @@
+graph LR
+    %% =========================================================================
+    %% RENTAFACIL EC — ARQUITECTURA RETO 2 (RDA2) — VERTICAL DE AUTOS
+    %% Proveedor conectado al Booking Prototipo Central (Paul Rosero)
+    %% Autor: Anthony Rosero — PUCE Integracion de Sistemas
+    %% =========================================================================
+
+    %% =========================================================================
+    %% CAPA 1: PERSISTENCIA — PostgreSQL (Neon serverless)
+    %% =========================================================================
+    subgraph CAPA1 ["CAPA 1: PERSISTENCIA — PostgreSQL Neon (schemas de RentaFacil)"]
+        subgraph SCH_AUT ["schema_autos"]
+            T_VEH[("vehicles")]
+            T_IMG[("vehicle_images")]
+            T_DEP[("depots")]
+            T_SUP[("suppliers")]
+            T_MAN[("mantenimiento_log")]
+        end
+
+        subgraph SCH_RES ["schema_reservas"]
+            T_HLD[("holds")]
+            T_PRV[("order_previews")]
+            T_ORD[("orders")]
+            T_CHK[("checkins")]
+        end
+
+        subgraph SCH_USR ["schema_usuarios"]
+            T_USR[("users")]
+            T_SCP[("scopes_oauth2")]
+        end
+
+        subgraph SCH_WHK ["schema_webhooks"]
+            T_WHK[("webhook_subscriptions")]
+        end
+
+        subgraph SCH_PROMO ["schema_promociones"]
+            T_PROMO[("contrato_promociones_b2b")]
+        end
+
+        subgraph SCH_OBX ["schema_outbox"]
+            T_OBX[("outbox_events")]
+            T_AUD[("auditoria_sagas")]
+        end
+    end
+
+    %% =========================================================================
+    %% CAPA 2: MICROSERVICIOS BASICOS (NestJS + TypeORM)
+    %% =========================================================================
+    subgraph CAPA2 ["CAPA 2: MICROSERVICIOS BASICOS (NestJS 10 + TypeORM)"]
+        MS_CAT["MS Catalogo y Busqueda (REST / 30m-slots)"]
+        MS_RES["MS Reservas y Check-in (REST / Idempotency-Key)"]
+        MS_FLO["MS Flota y Operaciones Mostrador (REST / Cooldown 2h)"]
+        MS_MAN["MS Mantenimiento y Auditoria (REST / RBAC MANTENIMIENTO)"]
+        MS_PROMO["MS Promociones B2B (REST / Cuestionario Catedra)"]
+        MS_PAY["MS Pagos (REST / Simulador Luhn)"]
+        MS_AUT["MS Usuarios y Auth (REST / JWT HS256 / OAuth2 scopes)"]
+        MS_WHK["MS Webhooks (REST / HMAC-SHA256)"]
+        MS_HLT["MS Telemetria y Salud (REST / Semaforo LED)"]
+        MS_STK["MS Stock Push gRPC (HTTP/2 Puerto 50051)"]
+    end
+
+    %% Enlaces Capa 1 a Capa 2
+    T_VEH -.-> MS_CAT
+    T_IMG -.-> MS_CAT
+    T_DEP -.-> MS_CAT
+    T_SUP -.-> MS_CAT
+    T_HLD -.-> MS_RES
+    T_PRV -.-> MS_RES
+    T_ORD -.-> MS_RES
+    T_CHK -.-> MS_RES
+    T_VEH -.-> MS_FLO
+    T_MAN -.-> MS_MAN
+    T_PROMO -.-> MS_PROMO
+    T_USR -.-> MS_AUT
+    T_SCP -.-> MS_AUT
+    T_WHK -.-> MS_WHK
+    T_OBX -.-> MS_HLT
+    T_AUD -.-> MS_MAN
+
+    %% =========================================================================
+    %% CAPA 3: ESB INTERNO + ACL hacia Booking Prototipo
+    %% =========================================================================
+    subgraph CAPA3 ["CAPA 3: ESB INTERNO Y ACL EXTERNA"]
+        subgraph ESB_INT ["ESB Interno — Reglas de Negocio Propias"]
+            ESB_ROUTER["Enrutador de Negocio"]
+            ESB_SAGA["Orquestador Saga Cancelacion LIFO Reembolso 100%"]
+            ESB_POL["Validador: edad conductor, 30m-slots, cooldown 2h, idempotencia"]
+        end
+
+        subgraph ESB_EXT ["ACL — Integracion con Booking Prototipo Central"]
+            ESB_ACL["Capa Anti-Corrupcion y Normalizacion DTO v2"]
+            ESB_CB["Circuit Breaker (Opossum) + Fallback"]
+            ESB_RL["Rate Limiter + Retry-After"]
+        end
+    end
+
+    %% Enlaces Capa 2 a Capa 3
+    MS_CAT <--> ESB_ROUTER
+    MS_RES <--> ESB_ROUTER
+    MS_FLO <--> ESB_ROUTER
+    MS_PAY <--> ESB_ROUTER
+    MS_PROMO <--> ESB_ROUTER
+    MS_AUT <--> ESB_ROUTER
+    MS_MAN <--> ESB_ROUTER
+    MS_HLT <--> ESB_ACL
+
+    ESB_ROUTER <--> ESB_SAGA
+    ESB_ROUTER <--> ESB_POL
+    ESB_ROUTER <--> ESB_ACL
+    ESB_ACL --- ESB_CB
+    ESB_ACL --- ESB_RL
+
+    %% =========================================================================
+    %% BOOKING PROTOTIPO CENTRAL (agregador externo del profesor)
+    %% =========================================================================
+    subgraph BOOKING ["BOOKING PROTOTIPO CENTRAL — Agregador (Paul Rosero)"]
+        BK_FORM["Formulario Nuevo Proveedor (URL base + Ping Semaforo)"]
+        BK_GW["API Gateway Central"]
+        BK_UI["Marketplace Multimodal"]
+    end
+
+    ESB_ACL <-->|Outbound REST /api/v2 compra y cancelacion| BK_GW
+    MS_STK -->|Push Stock gRPC puerto 50051 Streaming| BK_GW
+    MS_HLT -->|GET /autos/health JSON Semaforo verde-rojo| BK_FORM
+
+    %% =========================================================================
+    %% CAPA 4: EVENT BUS (RabbitMQ + Kafka opcional)
+    %% =========================================================================
+    subgraph CAPA4 ["CAPA 4: EVENT BUS Y STREAMING (RabbitMQ + Kafka)"]
+        subgraph BROKER_RB ["RabbitMQ (AMQP) — Broker Transaccional"]
+            RB_EX["Exchange: booking.events (Topic)"]
+            Q_CONF["Cola: q.auto.order.confirmed"]
+            Q_CANC["Cola: q.auto.order.cancelled (Saga LIFO)"]
+            Q_WASH["Cola: q.auto.cooldown.started (120 min)"]
+            Q_MANT["Cola: q.auto.mantenimiento.alerta"]
+            Q_STK["Cola: q.stock.actualizado"]
+            Q_DLQ["Cola: q.dead_letter (3 reintentos)"]
+        end
+
+        subgraph BROKER_KF ["Apache Kafka (opcional / RDA2 avanzado)"]
+            KF_BRIDGE["Puente RabbitMQ -> Kafka"]
+            T_CAT["Topic: booking.catalogo.stream"]
+            T_AUD["Topic: booking.compras.audit"]
+        end
+    end
+
+    %% CloudEvents v1.0
+    MS_RES -->|CloudEvent auto.order.confirmed| RB_EX
+    ESB_SAGA -->|CloudEvent auto.order.cancelled| RB_EX
+    MS_FLO -->|CloudEvent auto.cooldown.started| RB_EX
+    MS_MAN -->|CloudEvent auto.mantenimiento.alerta| RB_EX
+    MS_STK -->|stock.actualizado| RB_EX
+
+    RB_EX --> Q_CONF
+    RB_EX --> Q_CANC
+    RB_EX --> Q_WASH
+    RB_EX --> Q_MANT
+    RB_EX --> Q_STK
+    RB_EX --> Q_DLQ
+
+    RB_EX -.-> KF_BRIDGE
+    KF_BRIDGE --> T_CAT
+    KF_BRIDGE --> T_AUD
+
+    %% =========================================================================
+    %% CAPA 5: MICROSERVICIOS ORQUESTADOS
+    %% =========================================================================
+    subgraph CAPA5 ["CAPA 5: MICROSERVICIOS ORQUESTADOS"]
+        ORQ_RES["ORQ Reservas: hold -> preview -> create (Saga)"]
+        ORQ_CHK["ORQ Check-in: digital -> entrega -> devolucion + cooldown 2h"]
+        ORQ_STK["ORQ Stock: in-memory + push gRPC"]
+        SEC_RBAC["Seguridad JWT HS256 + RBAC (CLIENTE, ADMIN, MANTENIMIENTO)"]
+    end
+
+    ESB_ROUTER --> ORQ_RES
+    ESB_ROUTER --> ORQ_CHK
+    Q_STK --> ORQ_STK
+    Q_CONF --> MS_WHK
+    Q_CANC --> ORQ_RES
+    Q_WASH --> ORQ_CHK
+
+    ORQ_RES --- SEC_RBAC
+    ORQ_CHK --- SEC_RBAC
+    ORQ_STK --- SEC_RBAC
+
+    %% =========================================================================
+    %% CAPA 6: API GATEWAY + BFF
+    %% =========================================================================
+    subgraph CAPA6 ["CAPA 6: API GATEWAY Y BFF (NestJS Reverse Proxy)"]
+        GW_SEC["Gateway: JWT Guards + Rate Limiter + X-Correlation-Id + Idempotency-Key"]
+        BFF["BFF NestJS: /api/v2/autos/* (REST) + /graphql (opcional)"]
+        SWAGGER["Swagger UI: /api/docs + /api/docs-json (contrato propio)"]
+    end
+
+    ORQ_RES --> BFF
+    ORQ_CHK --> BFF
+    ORQ_STK --> BFF
+    MS_PROMO --> BFF
+    MS_HLT --> BFF
+    MS_MAN --> BFF
+    GW_SEC --- BFF
+    BFF --- SWAGGER
+
+    %% =========================================================================
+    %% CAPA 7: PRESENTACION (React 18 + Paneles Admin)
+    %% =========================================================================
+    subgraph CAPA7 ["CAPA 7: PRESENTACION (React 18 + Vite + Vercel)"]
+        subgraph UI_CLI ["Cliente Marketplace Autos"]
+            UI_SRCH["Busqueda con slots 30m + franjas horarias"]
+            UI_CAT_VIEW["Catalogo con filtros categoria y transmision"]
+            UI_CHK["Checkout + Simulador de pagos Luhn"]
+            UI_RES["Mis reservas + QR voucher"]
+        end
+
+        subgraph UI_ADM ["Paneles Administrativos"]
+            ADM_FLO["1. Panel Flota: Cronometro Cooldown 2h en vivo"]
+            ADM_MOS["2. Mostrador: Check-in Entrega y Devolucion + odometro"]
+            ADM_PROMO["3. Promociones B2B: Cuestionario Catedra RDA2 Seccion 9"]
+            ADM_MAN["4. Mantenimiento: Alerta preventiva por kilometraje"]
+            ADM_HLT["5. Semaforo LED Salud + Feed Outbox eventos"]
+            ADM_USR["6. CRUD Usuarios y RBAC (CLIENTE/ADMIN/MANTENIMIENTO)"]
+        end
+    end
+
+    BFF ==>|HTTP REST /api/v2/autos| UI_CLI
+    BFF -.->|Consultas administrativas| UI_ADM
+    UI_ADM -.->|Comandos directos| ESB_ROUTER
+
+    %% =========================================================================
+    %% LOGS WINSTON (fisicos, cero logs en BD)
+    %% =========================================================================
+    subgraph LOGS ["TELEMETRIA WINSTON — Logs Fisicos (CE01)"]
+        LG_C[("logs/combined.log")]
+        LG_E[("logs/error.log")]
+        LG_A[("logs/audit.log")]
+    end
+
+    CAPA2 -.->|Winston| LOGS
+    CAPA3 -.->|Winston| LOGS
+    CAPA5 -.->|Winston| LOGS
+    CAPA6 -.->|Winston| LOGS

@@ -22,7 +22,7 @@ info:
     (solo el rol `admin` lo recibe). Los errores siguen RFC 7807 (`application/problem+json`)
     con el mismo esquema `ProblemDetails` del contrato oficial.
 
-    **Ciclo del vehiculo tras la devolucion**: `RESERVED` -> (return) -> `WASHING` durante 24 h ->
+    **Ciclo del vehiculo tras la devolucion**: `RESERVED` -> (return) -> `WASHING` durante 2 h (cooldown Reto 2) ->
     `AVAILABLE`. Mientras esta en `WASHING`, `POST /search` (contrato oficial) solo lo ofrece si
     la recogida es posterior a `wash_until`. El paso a `AVAILABLE` ocurre solo (auto-sanado en
     cada `/search` y `/details`), sin worker externo.
@@ -54,7 +54,7 @@ tags:
 - name: Admin - Users
   description: CRUD de la tabla users (nunca devuelve la contrasena)
 - name: Admin - Returns
-  description: Devolucion de vehiculos; la orden sigue CONFIRMED y el vehiculo pasa a WASHING 24 h
+  description: Devolucion de vehiculos; la orden sigue CONFIRMED y el vehiculo pasa a WASHING 2 h
 - name: Admin - Dashboard
   description: Estadisticas agregadas para el panel de control
 - name: Admin - Other
@@ -591,7 +591,7 @@ paths:
       description: |
         - **No cancela** la orden: sigue `CONFIRMED` y se guardan `returned_at = ahora` y
           `returned_by_sub = sub del JWT`.
-        - El vehiculo pasa a `WASHING` con `wash_until = ahora + 24 h`.
+        - El vehiculo pasa a `WASHING` con `wash_until = ahora + 2 h`.
         - `POST /search` solo lo ofrece para recogidas `>= wash_until`; al vencer el lavado vuelve
           solo a `AVAILABLE`.
         - **Idempotente**: si la orden ya tiene `returned_at`, responde 200 con el estado actual

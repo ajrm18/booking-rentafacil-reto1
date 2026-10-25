@@ -1,0 +1,3535 @@
+# Contrato propio de RentaFacil EC para el Reto 2 (RDA2). GENERADO: no editar a mano.
+# Fuente: contracts/autos-openapi-v2.yaml (oficial) + contracts/rentafacil-ec-openapi.yaml (interno).
+# Regenerar: node scripts/build-contrato-propio-v2.mjs
+openapi: 3.0.3
+info:
+  title: RentaFacil EC — Autos API v2 (contrato oficial RDA2 + extensiones propias)
+  version: 2.0.0-rentafacil.1
+  contact:
+    name: Anthony Rosero
+  description: >-
+    Contrato propio de **RentaFacil EC** para el Reto 2. Extiende el contrato oficial
+
+    `autos-openapi-v2.yaml` (v2.0.0, fuente de verdad, sin cambios en sus operaciones: rutas `/v2/...`)
+
+    con los endpoints internos que no forman parte del contrato público (rutas `/v1/...`: Auth, Account
+
+    y el BFF `/admin`, que siguen bajo `/api/v1`) y una extensión v2 (`/v2/autos/{id}/mantenimiento/bitacora`).
+
+
+    **Server**: `/api` (cada ruta lleva su versión). Generado con `scripts/build-contrato-propio-v2.mjs`.
+
+
+    ### Decisiones de implementación
+
+    - **Roles (BearerAuth)**: el JWT de `POST /v1/auth/token` lleva `role` = `client` | `admin` | `mechanic`,
+      expuestos en v2 como `CLIENTE` | `ADMIN` | `MANTENIMIENTO`. La cabecera `X-Role` es informativa: el rol sale del token.
+    - **ApiKeyAuth**: `X-API-Key` se acepta para el Booking Prototipo (rol `B2B`) cuando el servidor tiene
+    `BOOKING_API_KEY`.
+
+    - **X-Correlation-Id**: opcional según el contrato; si falta se genera y siempre se devuelve en la respuesta.
+
+    - **Idempotency-Key**: UUID v4 obligatorio en toda mutación (400 si falta). Reintentos devuelven la misma respuesta.
+
+    - **Estados**: `vehicles.status` sigue en inglés (AVAILABLE, RESERVED, READY_FOR_PICKUP, DELIVERED, WASHING,
+    MAINTENANCE)
+      y se publica con las 6 fases de `EstadoVehiculoEnum`. Cooldown EN_LIMPIEZA = 120 min exactos.
+    - **Precios v2**: con impuestos incluidos (como el ejemplo oficial 3 × 35.50 + 3 × 18 = 160.50); recargo por edad 10
+    USD/día.
+
+    - **Extensiones de respuesta**: `AutoOrderResponseV2` agrega `checkins` (las 3 fases con sus timestamps),
+    `vehiculo`,
+      `recogida`, `devolucion`; `AutosHealthResponseV2` agrega `dependencias`, `event_bus_modo` y `outbox_pendientes`.
+      El contrato oficial no declara `additionalProperties: false`, así que son compatibles.
+servers:
+  - url: https://rentafacil-api.onrender.com/api
+    description: Producción (Render)
+  - url: http://localhost:3000/api
+    description: Local
+tags:
+  - name: Autos - Catálogo y Búsqueda v2
+    description: Búsqueda avanzada con franjas horarias de 30m, catálogo general de vehículos y especificaciones técnicas.
+  - name: Autos - Reservas y Check-in v2
+    description: Creación de reservas con Idempotency-Key, coberturas, check-in digital express y compensación Saga.
+  - name: Autos - Flota y Operaciones Mostrador v2
+    description: Panel de flota con cronómetro de cooldown en vivo, check-in de entrega y check-in de devolución.
+  - name: Autos - Mantenimiento y Auditoría v2
+    description: Endpoints técnicos protegidos para registro de odómetro, revisión física y alertas preventivas.
+  - name: Autos - Promociones B2B y Combos v2
+    description: Consulta y formalización de acuerdos comerciales para paquetes turísticos conforme a Cátedra RDA2 §9.
+  - name: Autos - Telemetría y Salud de Nodo v2
+    description: Endpoints de monitoreo de salud para el Semáforo LED (🟢/🔴) del Panel 1 de Administración y feed Outbox EDA.
+  - name: RentaFacil - Extensiones v2
+    description: Endpoints v2 propios de RentaFacil EC (fuera del contrato oficial)
+  - name: Auth
+    description: Authorization Server local (login y registro de clientes) (interno, /api/v1)
+  - name: Admin - Vehicles
+    description: CRUD de la tabla vehicles (incluye estado WASHING y wash_until) (interno, /api/v1)
+  - name: Admin - Depots
+    description: CRUD de la tabla depots (cada cambio emite el webhook DEPOT_UPDATE) (interno, /api/v1)
+  - name: Admin - Suppliers
+    description: CRUD de la tabla suppliers (interno, /api/v1)
+  - name: Admin - Orders
+    description: CRUD de la tabla orders (interno, /api/v1)
+  - name: Admin - Users
+    description: CRUD de la tabla users (nunca devuelve la contrasena) (interno, /api/v1)
+  - name: Admin - Returns
+    description: Devolucion de vehiculos; la orden sigue CONFIRMED y el vehiculo pasa a WASHING 2 h (interno, /api/v1)
+  - name: Admin - Dashboard
+    description: Estadisticas agregadas para el panel de control (interno, /api/v1)
+  - name: Admin - Other
+    description: Resto de tablas (vehicle_images, holds, order_previews, webhook_subscriptions) (interno, /api/v1)
+  - name: Account
+    description: Datos del usuario autenticado (dueno = sub del JWT) (interno, /api/v1)
+paths:
+  /v2/autos/health:
+    get:
+      tags:
+        - Autos - Telemetría y Salud de Nodo v2
+      summary: Healthcheck y telemetría de nodo del microservicio de Autos (Semáforo 🟢/🔴 RDA2 CE01)
+      description: >
+        Endpoint consumido por el Monitor de Nodos del Booking Prototipo (Panel 1).
+
+        Reporta el estado operativo ('HEALTHY', 'DOWN', 'DEGRADED'), latencia, uptime y métricas de vehículos en
+        cooldown para alimentar el semáforo LED visual de auditoría.
+      responses:
+        '200':
+          description: Nodo de autos operativo y saludable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutosHealthResponseV2'
+        '503':
+          $ref: '#/components/responses/ProblemDetails503'
+      parameters: []
+      security: []
+  /v2/autos/promociones/contrato:
+    get:
+      tags:
+        - Autos - Promociones B2B y Combos v2
+      summary: Consultar acuerdo comercial B2B para combos y promociones (Cátedra RDA2 §9)
+      description: >
+        Retorna el estado del acuerdo comercial pactado entre la tienda de autos y Booking Prototipo para la creación de
+        paquetes turísticos multidominio.
+
+        Responde a la exigencia de la Cátedra RDA2 §9: verificar si el partner acepta promociones y cuál es el
+        porcentaje máximo de descuento autorizado.
+      responses:
+        '200':
+          description: Términos comerciales de promociones recuperados exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContratoPromocionesResponseV2'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+    put:
+      tags:
+        - Autos - Promociones B2B y Combos v2
+      summary: Actualizar o formalizar acuerdo B2B de promociones y combos (Cátedra RDA2 §9)
+      description: |
+        Permite a la tienda socia (o a su agente inteligente) responder oficialmente a las preguntas de la cátedra:
+        1. ¿Acepta participar en la creación de promociones y combos de paquetes turísticos? (`permite_promociones`)
+        2. ¿Cuál es el porcentaje máximo de descuento que autoriza aplicar? (`porcentaje_descuento_maximo`)
+        3. ¿En qué ciudades aplica el convenio? (`destinos_habilitados`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContratoPromocionesRequestV2'
+      responses:
+        '200':
+          description: Acuerdo comercial formalizado y actualizado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  mensaje:
+                    type: string
+                    example: Acuerdo B2B de promociones y combos actualizado exitosamente.
+                  contrato:
+                    $ref: '#/components/schemas/ContratoPromocionesResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+  /v2/autos/eventos:
+    get:
+      tags:
+        - Autos - Telemetría y Salud de Nodo v2
+      summary: Feed Outbox de eventos asíncronos para streaming EDA (RabbitMQ / Kafka)
+      description: >
+        Mecanismo Transactional Outbox que expone los eventos emitidos por el microservicio de autos para streaming y
+        sincronización con Apache Kafka y RabbitMQ.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+          example: 10
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+          example: evt-car-100
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      responses:
+        '200':
+          description: Feed de eventos recuperado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutosEventosResponseV2'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos:
+    get:
+      tags:
+        - Autos - Catálogo y Búsqueda v2
+      summary: Listar catálogo general de vehículos disponibles
+      description: >
+        Retorna la lista de vehículos disponibles en inventario.
+
+        Aplica exclusión automática para vehículos en estado 'RESERVADO', 'ENTREGADO', 'EN_MANTENIMIENTO' o en cooldown
+        de 2 horas ('EN_LIMPIEZA').
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - ALL
+              - ECONOMICO
+              - COMPACTO
+              - SUV
+              - PREMIUM
+              - VAN
+            default: ALL
+        - name: transmission
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - ALL
+              - MANUAL
+              - AUTOMATICO
+            default: ALL
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Catálogo de vehículos disponibles recuperado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    example: 4
+                  limit:
+                    type: integer
+                    example: 10
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AutoVehiculoCardV2'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+      security: []
+  /v2/autos/search:
+    post:
+      tags:
+        - Autos - Catálogo y Búsqueda v2
+      summary: Búsqueda avanzada de vehículos (Catálogo Híbrido v2 con Cooldown de 2h)
+      description: >
+        Consulta vehículos disponibles en el punto de recogida seleccionado con franjas horarias de 30 minutos.
+
+        Aplica filtro de exclusión automática para vehículos en estado 'RESERVADO', 'ENTREGADO', 'EN_MANTENIMIENTO' o en
+        ciclo de limpieza ('EN_LIMPIEZA' dentro del cooldown obligatorio de 2 horas).
+
+        Evalúa edad del conductor para aplicar recargo joven (<25 años) o senior (>70 años), o rechazar con HTTP 422 si
+        es menor de 18 años.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchAutosRequestV2'
+      responses:
+        '200':
+          description: Lista de vehículos disponibles recuperada con éxito
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchAutosResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+        '503':
+          $ref: '#/components/responses/ProblemDetails503'
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      security: []
+  /v2/autos/flota:
+    get:
+      tags:
+        - Autos - Flota y Operaciones Mostrador v2
+      summary: Consultar estado operativo de toda la flota con cronómetro de cooldown en vivo (Panel 2)
+      description: >
+        Endpoint consumido por el Panel 2 de Gestión de Flota de Autos.
+
+        Reporta en tiempo real los 6 estados operativos de la flota, el conteo regresivo de 2 horas de cooldown
+        (`segundos_restantes_cooldown`), timestamp estimado de disponibilidad y las alertas preventivas de kilometraje.
+      responses:
+        '200':
+          description: Flota completa recuperada con telemetría de cooldown y kilometraje
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AutoFlotaItemV2'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      security: []
+  /v2/autos/{id}/coberturas:
+    get:
+      tags:
+        - Autos - Catálogo y Búsqueda v2
+      summary: Consultar opciones de cobertura y seguros para un vehículo (Protección Básica vs Cobertura Total)
+      description: >
+        Retorna la comparativa oficial entre:
+
+        1. **Protección Básica (Incluida):** Franquicia de $1,200.00 y retención de depósito de garantía en tarjeta de
+        crédito.
+
+        2. **Cobertura Total / Premium:** Franquicia de $0.00, depósito retenido de $0.00, protección integral de
+        cristales, neumáticos, bajos y pérdida de llaves con recargo diario transparente.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: auto-spark-01
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      responses:
+        '200':
+          description: Opciones de cobertura desglosadas con franquicias y depósitos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoberturasResponseV2'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+      security: []
+  /v2/autos/{id}:
+    get:
+      tags:
+        - Autos - Catálogo y Búsqueda v2
+      summary: Consultar detalle técnico de un vehículo por ID
+      description: >-
+        Retorna ficha técnica completa, imágenes, política de combustible ("Lleno a lleno"), kilometraje actual y estado
+        operativo en la máquina de estados.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: auto-spark-01
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      responses:
+        '200':
+          description: Detalle del vehículo recuperado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoVehiculoCardV2'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+      security: []
+  /v2/autos/orders:
+    get:
+      tags:
+        - Autos - Reservas y Check-in v2
+      summary: Listar todas las órdenes de renta de autos (Consola de Gestión)
+      description: Retorna el historial agregado de reservas de vehículos para el sistema de administración central.
+      responses:
+        '200':
+          description: Lista de órdenes de renta
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AutoOrderResponseV2'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+  /v2/autos/orders/create:
+    post:
+      tags:
+        - Autos - Reservas y Check-in v2
+      summary: Crear reserva de vehículo con Idempotency-Key y Cobertura (Transacción Saga)
+      description: >
+        Formaliza el alquiler de un vehículo. Transiciona el auto de 'DISPONIBLE' a 'RESERVADO'.
+
+        Requiere cabecera obligatoria 'Idempotency-Key' para garantizar tolerancia a reintentos de red y emite el evento
+        CloudEvent 'auto.order.confirmed'.
+
+        Genera localizador PNR de 8 caracteres y código QR digital de retiro express.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAutoOrderRequestV2'
+      responses:
+        '201':
+          description: Reserva creada y confirmada exitosamente con voucher QR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoOrderResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+        '503':
+          $ref: '#/components/responses/ProblemDetails503'
+  /v2/autos/reservas:
+    post:
+      tags:
+        - Autos - Reservas y Check-in v2
+      summary: Crear reserva de vehículo (Alias de compatibilidad v2)
+      description: Endpoint alternativo equivalente a `/autos/orders/create` para compatibilidad de clientes.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAutoOrderRequestV2'
+      responses:
+        '201':
+          description: Reserva de auto creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoOrderResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+        '503':
+          $ref: '#/components/responses/ProblemDetails503'
+  /v2/autos/reservas/{id}/checkin:
+    post:
+      tags:
+        - Autos - Reservas y Check-in v2
+      summary: Check-in digital anticipado para entrega rápida de llaves (Fast-Track)
+      description: >
+        Valida anticipadamente los datos de la licencia de conducir del cliente y genera el código QR para retiro
+        express de llaves en mostrador.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: id
+          in: path
+          required: true
+          description: ID de la reserva o PNR
+          schema:
+            type: string
+          example: CAR7849B
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - documento_identidad
+              properties:
+                numero_licencia:
+                  type: string
+                  example: '1723456789'
+                documento_identidad:
+                  type: string
+                  example: '1723456789'
+                fecha_vencimiento_licencia:
+                  type: string
+                  format: date
+                  example: '2028-12-31'
+      responses:
+        '200':
+          description: Check-in validado exitosamente con voucher digital activado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinDigitalResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos/orders/{id}/checkin-entrega:
+    post:
+      tags:
+        - Autos - Flota y Operaciones Mostrador v2
+      summary: Check-in de Entrega en mostrador (Licencia física y Odómetro Inicial)
+      description: >
+        Operación presencial en mostrador efectuada por el agente de patio.
+
+        Registra el odómetro inicial (`km_salida`), verifica la licencia física y transiciona el vehículo al estado
+        'ENTREGADO' (fase en uso por el cliente según Cátedra RDA2 §5).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: id
+          in: path
+          required: true
+          description: ID de la orden o código PNR
+          schema:
+            type: string
+          example: CAR7849B
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckinEntregaRequestV2'
+      responses:
+        '200':
+          description: Entrega confirmada y vehículo puesto en estado ENTREGADO
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinEntregaResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos/orders/{id}/checkin-devolucion:
+    post:
+      tags:
+        - Autos - Flota y Operaciones Mostrador v2
+      summary: Check-in de Retorno e inicio inmediato del Cooldown de Limpieza de 2h
+      description: >
+        Operación presencial efectuada al recibir el vehículo en patio.
+
+        Registra el odómetro final (`km_retorno`), calcula los kilómetros recorridos totales, actualiza el nivel de
+        combustible y transiciona inmediatamente el vehículo al estado 'EN_LIMPIEZA' con un cooldown estricto de 2 horas
+        (120 minutos).
+
+        Si el odómetro supera el umbral programado, activa la alerta de mantenimiento preventivo.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: id
+          in: path
+          required: true
+          description: ID de la orden o código PNR
+          schema:
+            type: string
+          example: CAR7849B
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckinDevolucionRequestV2'
+      responses:
+        '200':
+          description: Devolución procesada, orden completada y cooldown de 2 horas iniciado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinDevolucionResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos/orders/{orderId}:
+    get:
+      tags:
+        - Autos - Reservas y Check-in v2
+      summary: Consultar orden o reserva de auto por ID o PNR
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CAR7849B
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      responses:
+        '200':
+          description: Detalle de la orden de renta recuperado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoOrderResponseV2'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos/orders/{orderId}/cancel:
+    post:
+      tags:
+        - Autos - Reservas y Check-in v2
+      summary: Cancelar una orden de renta existente (Compensación Saga LIFO con Reembolso 100%)
+      description: >
+        Ejecuta la compensación distribuida para la renta de autos.
+
+        Libera el vehículo a estado 'DISPONIBLE', emite código de compensación 'REF-AUTO-...' y procesa el reembolso del
+        100% sin penalización conforme al Patrón Saga.
+
+        Emite el evento CloudEvent 'auto.order.cancelled'.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CAR7849B
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: Cambio de itinerario de vuelo
+                motivo:
+                  type: string
+                  example: Cambio de itinerario de vuelo
+                solicitante:
+                  type: string
+                  enum:
+                    - CLIENTE
+                    - SAGA_ORCHESTRATOR
+                    - ADMIN
+                  example: SAGA_ORCHESTRATOR
+                  description: Identifica si la cancelación es un rollback compensatorio de la Saga o un autoservicio del cliente.
+      responses:
+        '200':
+          description: Orden cancelada exitosamente, vehículo liberado a DISPONIBLE y reembolso procesado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_id:
+                    type: string
+                    example: CAR7849B
+                  pnr:
+                    type: string
+                    example: CAR7849B
+                  status:
+                    type: string
+                    example: CANCELLED
+                  auto_id:
+                    type: string
+                    example: auto-spark-01
+                  refund:
+                    type: object
+                    properties:
+                      refund_id:
+                        type: string
+                        example: REF-AUTO-9921
+                      amount:
+                        type: number
+                        example: 106.5
+                      currency:
+                        type: string
+                        example: USD
+                      percentage:
+                        type: integer
+                        example: 100
+                      status:
+                        type: string
+                        example: PROCESSED
+                  inventory_restoration:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: RESTORED
+                      vehicle_id:
+                        type: string
+                        example: auto-spark-01
+                      new_state:
+                        type: string
+                        example: DISPONIBLE
+                  message:
+                    type: string
+                    example: Orden de renta cancelada exitosamente. Vehículo liberado y reembolso procesado.
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos/{id}/devolucion:
+    post:
+      tags:
+        - Autos - Mantenimiento y Auditoría v2
+      summary: Registrar devolución directa del vehículo e iniciar Cooldown de Limpieza de 2 Horas
+      description: |
+        Cambia el estado operativo a 'EN_LIMPIEZA' y fija el timestamp 'disponible_desde = NOW() + 2 HORAS'.
+        Durante este lapso de 120 minutos, el auto es invisible para los motores de búsqueda y la API REST pública.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: auto-spark-01
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      responses:
+        '200':
+          description: Devolución procesada y cooldown de 2 horas iniciado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevolucionAutoResponseV2'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos/{id}/mantenimiento/registro:
+    post:
+      tags:
+        - Autos - Mantenimiento y Auditoría v2
+      summary: Registro de odómetro, revisión física y alerta preventiva (Rol Técnico MANTENIMIENTO / ADMIN)
+      description: >
+        Endpoint protegido exclusivamente para los roles 'MANTENIMIENTO' o 'ADMIN' (RBAC Cátedra RDA2 §5).
+
+        Registra odómetro actual, combustible, estado de neumáticos y condiciones de carrocería.
+
+        Evalúa si 'kilometraje_actual >= proximo_mantenimiento_km' para activar alertas operativas en el dashboard y
+        emitir el evento CloudEvent 'auto.mantenimiento.alerta'.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: auto-spark-01
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/XRoleHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistroMantenimientoRequestV2'
+      responses:
+        '200':
+          description: Registro de mantenimiento asentado exitosamente y odómetro actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistroMantenimientoResponseV2'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '500':
+          $ref: '#/components/responses/ProblemDetails500'
+  /v2/autos/{id}/mantenimiento/bitacora:
+    get:
+      tags:
+        - RentaFacil - Extensiones v2
+      summary: Bitácora de mantenimiento de un vehículo (tabla mantenimiento_log)
+      description: 'Últimos 50 registros de POST /v2/autos/{id}/mantenimiento/registro. RBAC: MANTENIMIENTO o ADMIN.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: VEH-1007
+      responses:
+        '200':
+          description: Registros de la bitácora
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MantenimientoLogRentaFacil'
+        '401':
+          $ref: '#/components/responses/ProblemDetails401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+  /v1/auth/token:
+    post:
+      tags:
+        - Auth
+      summary: Iniciar sesion y obtener un JWT
+      description: Valida correo y contrasena contra la tabla `users` y emite un JWT con los scopes del rol.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '201':
+          description: JWT emitido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+  /v1/auth/register:
+    post:
+      tags:
+        - Auth
+      summary: Registrar un cliente nuevo
+      description: |
+        Registro publico. El rol siempre es `client` (enviar `role` responde 400). Devuelve la misma
+        respuesta que `/auth/token`, asi el cliente entra directamente. Endpoint publico (sin JWT),
+        con limite de peticiones.
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Cliente creado y su JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '429':
+          $ref: '#/components/responses/ProblemDetailsV1_429'
+  /v1/admin/vehicles:
+    get:
+      tags:
+        - Admin - Vehicles
+      summary: Listar todos los vehiculos del inventario
+      operationId: listVehicles
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/VehicleStatus'
+      responses:
+        '200':
+          description: Vehiculos (con agencia, proveedor e imagenes)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VehicleAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+    post:
+      tags:
+        - Admin - Vehicles
+      summary: Crear un vehiculo
+      description: >-
+        Obligatorios: make, model, year, plate, price_per_day, depot_id, supplier_id. Si falta vehicle_id se genera
+        VEH-<timestamp>.
+      operationId: createVehicle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VehicleAdmin'
+      responses:
+        '201':
+          description: Vehiculo creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+  /v1/admin/vehicles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: vehicle_id (ej. VEH-1001)
+        schema:
+          type: string
+    get:
+      tags:
+        - Admin - Vehicles
+      summary: Obtener un vehiculo con su galeria
+      operationId: getVehicle
+      responses:
+        '200':
+          description: Vehiculo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    put:
+      tags:
+        - Admin - Vehicles
+      summary: Actualizar un vehiculo
+      description: |
+        Actualizacion parcial. Acepta `gallery` (array de URLs) para reemplazar las fotos.
+        Si `status` cambia a un valor distinto de WASHING, `wash_until` se limpia.
+      operationId: updateVehicle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/VehicleAdmin'
+                - type: object
+                  properties:
+                    gallery:
+                      type: array
+                      items:
+                        type: string
+                        format: uri
+      responses:
+        '200':
+          description: Vehiculo actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    delete:
+      tags:
+        - Admin - Vehicles
+      summary: Eliminar un vehiculo (sus imagenes se borran en cascada)
+      operationId: deleteVehicle
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+        '409':
+          $ref: '#/components/responses/ProblemDetailsV1_409'
+  /v1/admin/depots:
+    get:
+      tags:
+        - Admin - Depots
+      summary: Listar agencias
+      operationId: listDepots
+      responses:
+        '200':
+          description: Agencias
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DepotAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+    post:
+      tags:
+        - Admin - Depots
+      summary: Crear una agencia
+      description: 'Obligatorios: name, city.'
+      operationId: createDepot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepotAdmin'
+      responses:
+        '201':
+          description: Agencia creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepotAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+  /v1/admin/depots/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: depot_id
+        schema:
+          type: integer
+    get:
+      tags:
+        - Admin - Depots
+      summary: Obtener una agencia
+      operationId: getDepot
+      responses:
+        '200':
+          description: Agencia
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepotAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    put:
+      tags:
+        - Admin - Depots
+      summary: Actualizar una agencia
+      operationId: updateDepot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepotAdmin'
+      responses:
+        '200':
+          description: Agencia actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepotAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    delete:
+      tags:
+        - Admin - Depots
+      summary: Eliminar una agencia (409 si tiene vehiculos)
+      operationId: deleteDepot
+      responses:
+        '204':
+          description: Eliminada
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+        '409':
+          $ref: '#/components/responses/ProblemDetailsV1_409'
+  /v1/admin/suppliers:
+    get:
+      tags:
+        - Admin - Suppliers
+      summary: Listar proveedores
+      operationId: listSuppliers
+      responses:
+        '200':
+          description: Proveedores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SupplierAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+    post:
+      tags:
+        - Admin - Suppliers
+      summary: Crear un proveedor
+      description: 'Obligatorio: name.'
+      operationId: createSupplier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierAdmin'
+      responses:
+        '201':
+          description: Proveedor creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+  /v1/admin/suppliers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: supplier_id
+        schema:
+          type: integer
+    get:
+      tags:
+        - Admin - Suppliers
+      summary: Obtener un proveedor
+      operationId: getSupplier
+      responses:
+        '200':
+          description: Proveedor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    put:
+      tags:
+        - Admin - Suppliers
+      summary: Actualizar un proveedor
+      operationId: updateSupplier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierAdmin'
+      responses:
+        '200':
+          description: Proveedor actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    delete:
+      tags:
+        - Admin - Suppliers
+      summary: Eliminar un proveedor (409 si tiene vehiculos)
+      operationId: deleteSupplier
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+        '409':
+          $ref: '#/components/responses/ProblemDetailsV1_409'
+  /v1/admin/orders:
+    get:
+      tags:
+        - Admin - Orders
+      summary: Listar todas las ordenes
+      description: Mas recientes primero. Incluye returned_at / returned_by_sub si el vehiculo ya se devolvio.
+      operationId: listOrdersAdmin
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - CONFIRMED
+              - CANCELLED
+              - PENDING
+      responses:
+        '200':
+          description: Ordenes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderAdminView'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+    post:
+      tags:
+        - Admin - Orders
+      summary: Registrar una orden manual (ej. reserva hecha en mostrador)
+      description: 'Obligatorios: vehicle_id, total_price. El locator se genera (RENTAFACIL-XXXXXX).'
+      operationId: createOrderAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderAdminView'
+      responses:
+        '201':
+          description: Orden creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAdminView'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+  /v1/admin/orders/{orderId}:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    get:
+      tags:
+        - Admin - Orders
+      summary: Obtener una orden
+      operationId: getOrderAdmin
+      responses:
+        '200':
+          description: Orden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAdminView'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    put:
+      tags:
+        - Admin - Orders
+      summary: Actualizar una orden (estado, datos del conductor...)
+      description: Actualizacion parcial (equivale al PATCH del panel; el BFF expone PUT).
+      operationId: updateOrderAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderAdminView'
+      responses:
+        '200':
+          description: Orden actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAdminView'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    delete:
+      tags:
+        - Admin - Orders
+      summary: Eliminar una orden
+      operationId: deleteOrderAdmin
+      responses:
+        '204':
+          description: Eliminada
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+  /v1/admin/orders/{orderId}/return:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      tags:
+        - Admin - Returns
+      summary: Registrar la devolucion del vehiculo de una orden
+      description: |
+        - **No cancela** la orden: sigue `CONFIRMED` y se guardan `returned_at = ahora` y
+          `returned_by_sub = sub del JWT`.
+        - El vehiculo pasa a `WASHING` con `wash_until = ahora + 2 h`.
+        - `POST /search` solo lo ofrece para recogidas `>= wash_until`; al vencer el lavado vuelve
+          solo a `AVAILABLE`.
+        - **Idempotente**: si la orden ya tiene `returned_at`, responde 200 con el estado actual
+          sin modificar nada.
+        - Si el vehiculo ya esta reservado por **otra** orden activa (se devuelve una orden antigua),
+          solo se registra la devolucion y el vehiculo conserva su estado (evita una doble reserva).
+
+        Requiere los scopes `autos:webhooks` (administrador) y `autos:book`.
+      operationId: returnOrder
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Orden devuelta y estado del vehiculo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          description: La orden o su vehiculo no existen
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetailsV1'
+        '409':
+          description: La orden no esta CONFIRMED (code BOOKING_NOT_CONFIRMED)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetailsV1'
+  /v1/admin/users:
+    get:
+      tags:
+        - Admin - Users
+      summary: Listar usuarios
+      operationId: listUsers
+      parameters:
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - client
+              - admin
+      responses:
+        '200':
+          description: Usuarios (sin contrasena)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+    post:
+      tags:
+        - Admin - Users
+      summary: Crear un usuario (cliente por defecto)
+      description: 'Obligatorios: first_name, last_name, email, password.'
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAdminInput'
+      responses:
+        '201':
+          description: Usuario creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+  /v1/admin/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: user_id (UUID)
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Admin - Users
+      summary: Obtener un usuario
+      operationId: getUser
+      responses:
+        '200':
+          description: Usuario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAdmin'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    put:
+      tags:
+        - Admin - Users
+      summary: Actualizar un usuario (nombre, email, rol, telefono y, opcionalmente, contrasena)
+      description: Un admin no puede quitarse a si mismo el rol de administrador.
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAdminInput'
+      responses:
+        '200':
+          description: Usuario actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAdmin'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    delete:
+      tags:
+        - Admin - Users
+      summary: Eliminar un usuario (409 si es la propia cuenta)
+      operationId: deleteUser
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+        '409':
+          $ref: '#/components/responses/ProblemDetailsV1_409'
+  /v1/admin/stats:
+    get:
+      tags:
+        - Admin - Dashboard
+      summary: Estadisticas agregadas para el panel de control
+      operationId: adminStats
+      responses:
+        '200':
+          description: Conteos de las tablas, ordenes finalizadas e ingresos
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+  /v1/admin/{resource}:
+    parameters:
+      - $ref: '#/components/parameters/GenericResource'
+    get:
+      tags:
+        - Admin - Other
+      summary: Listar registros de vehicle-images, holds, order-previews o webhooks
+      description: 'Filtros: vehicle-images `?vehicle_id=`, holds `?status=&vehicle_id=`, order-previews `?vehicle_id=`.'
+      operationId: listGeneric
+      responses:
+        '200':
+          description: Registros
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GenericRecord'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+    post:
+      tags:
+        - Admin - Other
+      summary: Crear un registro
+      operationId: createGeneric
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRecord'
+      responses:
+        '201':
+          description: Registro creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericRecord'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+  /v1/admin/{resource}/{id}:
+    parameters:
+      - $ref: '#/components/parameters/GenericResource'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - Admin - Other
+      summary: Obtener un registro
+      operationId: getGeneric
+      responses:
+        '200':
+          description: Registro
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericRecord'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    put:
+      tags:
+        - Admin - Other
+      summary: Actualizar un registro
+      operationId: updateGeneric
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenericRecord'
+      responses:
+        '200':
+          description: Registro actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericRecord'
+        '400':
+          $ref: '#/components/responses/ProblemDetailsV1_400'
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+    delete:
+      tags:
+        - Admin - Other
+      summary: Eliminar un registro
+      operationId: deleteGeneric
+      responses:
+        '204':
+          description: Eliminado
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+        '403':
+          $ref: '#/components/responses/ProblemDetailsV1_403'
+        '404':
+          $ref: '#/components/responses/ProblemDetailsV1_404'
+  /v1/account/profile:
+    get:
+      tags:
+        - Account
+      summary: Mi perfil (para autollenar los datos del conductor)
+      description: 'Scope: autos:read.'
+      operationId: myProfile
+      responses:
+        '200':
+          description: Perfil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  first_name:
+                    type: string
+                  last_name:
+                    type: string
+                  email:
+                    type: string
+                  phone:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+  /v1/account/orders:
+    get:
+      tags:
+        - Account
+      summary: Mis ordenes (OrderDetail del contrato oficial); dueno = sub del token
+      description: 'Scope: autos:read.'
+      operationId: myOrders
+      responses:
+        '200':
+          description: Ordenes del usuario
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401':
+          $ref: '#/components/responses/ProblemDetailsV1_401'
+components:
+  schemas:
+    EstadoVehiculoEnum:
+      type: string
+      description: Las 6 fases formales de la máquina de estados vehicular exigidas por Cátedra RDA2 §5
+      enum:
+        - DISPONIBLE
+        - RESERVADO
+        - LISTO_PARA_ENTREGAR
+        - ENTREGADO
+        - EN_LIMPIEZA
+        - EN_MANTENIMIENTO
+      example: DISPONIBLE
+    SearchAutosRequestV2:
+      type: object
+      required:
+        - pickup_location
+        - pickup_date
+        - pickup_time
+        - dropoff_date
+        - dropoff_time
+      properties:
+        pickup_location:
+          type: string
+          description: Punto de recogida (Ciudad o código IATA como UIO, GYE)
+          example: Aeropuerto Mariscal Sucre (UIO), Quito
+        dropoff_location:
+          type: string
+          description: Punto de devolución (Mismo punto o trayecto único)
+          example: Aeropuerto Mariscal Sucre (UIO), Quito
+        pickup_date:
+          type: string
+          format: date
+          example: '2026-10-20'
+        pickup_time:
+          type: string
+          description: Franja horaria estricta en intervalos de 30 minutos
+          example: '10:00'
+        dropoff_date:
+          type: string
+          format: date
+          example: '2026-10-23'
+        dropoff_time:
+          type: string
+          description: Franja horaria estricta en intervalos de 30 minutos
+          example: '10:00'
+        driver_age:
+          type: integer
+          description: >-
+            Edad del conductor principal (menores de 25 o mayores de 70 aplican recargo; menores de 18 son rechazados
+            con HTTP 422)
+          example: 32
+        driver_age_bracket:
+          type: boolean
+          description: True si el conductor tiene entre 30 y 65 años (estándar sin recargo)
+          default: true
+        category:
+          type: string
+          enum:
+            - ALL
+            - ECONOMICO
+            - COMPACTO
+            - SUV
+            - PREMIUM
+            - VAN
+          default: ALL
+        transmission:
+          type: string
+          enum:
+            - ALL
+            - MANUAL
+            - AUTOMATICO
+          default: ALL
+    SearchAutosResponseV2:
+      type: object
+      properties:
+        request_id:
+          type: string
+          example: req-autos-179200
+        metadata:
+          type: object
+          properties:
+            total_results:
+              type: integer
+              example: 5
+            surcharge_applied:
+              type: boolean
+              description: Aplica si edad < 25 o > 70
+              example: false
+            surcharge_amount:
+              type: number
+              example: 0
+            pickup_location:
+              type: string
+              example: UIO
+            pickup_date:
+              type: string
+              example: '2026-10-20'
+            dropoff_date:
+              type: string
+              example: '2026-10-23'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutoVehiculoCardV2'
+    AutoVehiculoCardV2:
+      type: object
+      properties:
+        vehicle_id:
+          type: string
+          example: auto-spark-01
+        marca:
+          type: string
+          example: Chevrolet
+        modelo:
+          type: string
+          example: Spark GT
+        categoria:
+          type: string
+          example: ECONOMICO
+        precio_diario:
+          type: number
+          format: float
+          example: 35.5
+        precio_total:
+          type: number
+          format: float
+          example: 106.5
+        moneda:
+          type: string
+          example: USD
+        transmision:
+          type: string
+          example: MANUAL
+        asientos:
+          type: integer
+          example: 5
+        puertas:
+          type: integer
+          example: 4
+        maletas_grandes:
+          type: integer
+          example: 1
+        maletas_pequenas:
+          type: integer
+          example: 1
+        aire_acondicionado:
+          type: boolean
+          example: true
+        kilometraje_ilimitado:
+          type: boolean
+          example: true
+        politica_combustible:
+          type: string
+          example: LLENO_A_LLENO
+        cancelacion_gratuita:
+          type: boolean
+          example: true
+        proveedor:
+          type: object
+          properties:
+            nombre:
+              type: string
+              example: Europcar
+            rating:
+              type: number
+              example: 8.4
+            ubicacion:
+              type: string
+              example: En la terminal aérea (Terminal Llegadas)
+        estado:
+          $ref: '#/components/schemas/EstadoVehiculoEnum'
+        kilometraje_actual:
+          type: integer
+          example: 5200
+        proximo_mantenimiento_km:
+          type: integer
+          example: 10000
+        mantenimiento_requerido:
+          type: boolean
+          example: false
+        foto_url:
+          type: string
+          example: https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=600
+        images:
+          type: array
+          items:
+            type: string
+        auto_id:
+          type: string
+          description: Alias canónico en español para vehicle_id.
+          example: auto-spark-01
+        id:
+          type: string
+          description: Identificador público del vehículo.
+          example: auto-spark-01
+        brand:
+          type: string
+          description: English alias for car brand.
+          example: Chevrolet
+        model:
+          type: string
+          description: English alias for car model.
+          example: Spark GT
+        category:
+          type: string
+          description: English alias for vehicle category.
+          example: ECONOMICO
+        daily_price:
+          type: number
+          description: English alias for daily price in USD.
+          example: 35.5
+        total_price_usd:
+          type: number
+          description: Total price for selected dates.
+          example: 106.5
+        currency:
+          type: string
+          example: USD
+        transmission:
+          type: string
+          example: MANUAL
+        seats:
+          type: integer
+          example: 4
+        doors:
+          type: integer
+          example: 5
+        air_conditioning:
+          type: boolean
+          example: true
+        unlimited_mileage:
+          type: boolean
+          example: true
+        fuel_policy:
+          type: string
+          example: Lleno a Lleno (Full-to-Full)
+        free_cancellation:
+          type: boolean
+          example: true
+    AutoFlotaItemV2:
+      type: object
+      description: Registro operativo de un vehículo en el Panel 2 de Gestión de Flota
+      properties:
+        id:
+          type: string
+          example: auto-spark-01
+        marca:
+          type: string
+          example: Chevrolet
+        modelo:
+          type: string
+          example: Spark GT
+        categoria:
+          type: string
+          example: ECONOMICO
+        precio_diario:
+          type: number
+          example: 35.5
+        estado_operativo:
+          $ref: '#/components/schemas/EstadoVehiculoEnum'
+        cooldown_activo:
+          type: boolean
+          description: True si el auto está en la fase 'EN_LIMPIEZA' con conteo regresivo
+          example: false
+        segundos_restantes_cooldown:
+          type: integer
+          description: Segundos restantes de las 2 horas de enfriamiento (0 si ya expiró o no aplica)
+          example: 5400
+        disponible_estimado_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-22T14:30:00Z'
+        kilometraje_actual:
+          type: integer
+          example: 5200
+        umbral_mantenimiento_km:
+          type: integer
+          example: 10000
+        alerta_mantenimiento:
+          type: boolean
+          description: True si kilometraje_actual >= umbral_mantenimiento_km
+          example: false
+        foto_url:
+          type: string
+          example: https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=600
+    CoberturasResponseV2:
+      type: object
+      properties:
+        auto_id:
+          type: string
+          example: auto-spark-01
+        vehiculo:
+          type: string
+          example: Chevrolet Spark GT
+        opciones:
+          type: array
+          items:
+            type: object
+            properties:
+              tipo:
+                type: string
+                enum:
+                  - BASICA
+                  - TOTAL
+              nombre:
+                type: string
+                example: Cobertura Total / Protección Premium
+              costo_adicional_diario:
+                type: number
+                example: 18
+              franquicia:
+                type: number
+                description: Monto de franquicia (0 en Cobertura Total)
+                example: 0
+              deposito_garantia:
+                type: number
+                description: Depósito retenido en mostrador en tarjeta de crédito
+                example: 0
+              descripcion:
+                type: string
+                example: Elimina totalmente la franquicia ante daños en carrocería, cristales, neumáticos y llaves.
+              beneficios:
+                type: array
+                items:
+                  type: string
+    CreateAutoOrderRequestV2:
+      type: object
+      required:
+        - vehicle_id
+        - pickup_date
+        - dropoff_date
+        - conductor
+      properties:
+        vehicle_id:
+          type: string
+          example: auto-spark-01
+        dias:
+          type: integer
+          example: 3
+        tipo_cobertura:
+          type: string
+          enum:
+            - BASICA
+            - TOTAL
+          default: BASICA
+        pickup_location:
+          type: string
+          example: Aeropuerto Mariscal Sucre (UIO), Quito
+        dropoff_location:
+          type: string
+          example: Aeropuerto Mariscal Sucre (UIO), Quito
+        pickup_date:
+          type: string
+          format: date
+          example: '2026-10-20'
+        dropoff_date:
+          type: string
+          format: date
+          example: '2026-10-23'
+        conductor:
+          type: object
+          required:
+            - nombre
+            - email
+            - telefono
+            - licencia_conducir
+          properties:
+            nombre:
+              type: string
+              example: Carlos Andrés Zambrano
+            email:
+              type: string
+              format: email
+              example: carlos.zambrano@example.com
+            telefono:
+              type: string
+              example: '+593987654321'
+            licencia_conducir:
+              type: string
+              example: '1723456789'
+            pais_licencia:
+              type: string
+              example: Ecuador
+            edad:
+              type: integer
+              example: 32
+            numero_vuelo:
+              type: string
+              example: AV1632
+            nombre_completo:
+              type: string
+              example: Dilan Flores
+            full_name:
+              type: string
+              example: Dilan Flores
+            correo:
+              type: string
+              format: email
+              example: dilan.flores@epn.edu.ec
+            phone:
+              type: string
+              example: '+593987654321'
+            edad_conductor:
+              type: integer
+              example: 28
+            driver_age:
+              type: integer
+              example: 28
+        auto_id:
+          type: string
+          description: Alias canónico en español para identificador del vehículo.
+          example: auto-spark-01
+        fecha_recogida:
+          type: string
+          format: date
+          description: Alias canónico en español para fecha de retiro (YYYY-MM-DD).
+          example: '2026-11-10'
+        fecha_devolucion:
+          type: string
+          format: date
+          description: Alias canónico en español para fecha de retorno (YYYY-MM-DD).
+          example: '2026-11-12'
+        hora_recogida:
+          type: string
+          description: Hora militar estricta en intervalos de 30 minutos (ej. 10:00 o 10:30).
+          example: '10:00'
+        hora_devolucion:
+          type: string
+          description: Hora militar estricta en intervalos de 30 minutos (ej. 10:00 o 10:30).
+          example: '10:00'
+        lugar_recogida:
+          type: string
+          description: Alias canónico en español para terminal u oficina de retiro.
+          example: UIO Aeropuerto
+        lugar_devolucion:
+          type: string
+          description: Alias canónico en español para terminal u oficina de retorno.
+          example: UIO Aeropuerto
+        cobertura:
+          type: string
+          enum:
+            - BASICA
+            - TOTAL
+            - PREMIUM
+          description: Alias canónico en español para nivel de cobertura del seguro.
+          example: TOTAL
+        idempotency_key:
+          type: string
+          format: uuid
+          deprecated: true
+          description: >-
+            DEPRECATED (IETF Draft). La clave de idempotencia DEBE transmitirse en la cabecera HTTP Idempotency-Key para
+            evitar colisiones semánticas.
+    AutoOrderResponseV2:
+      type: object
+      properties:
+        order_id:
+          type: string
+          example: CAR7849B
+        pnr:
+          type: string
+          example: CAR7849B
+        status:
+          type: string
+          example: CONFIRMED
+        auto_id:
+          type: string
+          example: auto-spark-01
+        tipo_cobertura:
+          type: string
+          example: TOTAL
+        deposito_garantia:
+          type: number
+          example: 0
+        total_price:
+          type: object
+          properties:
+            currency:
+              type: string
+              example: USD
+            total:
+              type: number
+              example: 160.5
+            desglose:
+              type: object
+        voucher_qr_data:
+          type: string
+          example: BOOKING-CAR-CAR7849B-auto-spark-01-CONFIRMED
+        checklist_mostrador:
+          type: array
+          items:
+            type: string
+        refund:
+          type: object
+          nullable: true
+          properties:
+            refund_id:
+              type: string
+              example: REF-AUTO-9921
+            amount:
+              type: number
+              example: 160.5
+            currency:
+              type: string
+              example: USD
+            status:
+              type: string
+              example: PROCESSED
+            message:
+              type: string
+        _links:
+          type: object
+        codigo_reserva:
+          type: string
+          description: Alias canónico en español para localizador PNR.
+          example: CAR7849B
+        estado:
+          type: string
+          description: Alias canónico en español para estado de la reserva.
+          example: CONFIRMED
+        moneda:
+          type: string
+          description: Divisa de liquidación (USD).
+          example: USD
+        precio_total_monto:
+          type: number
+          description: Monto total en USD.
+          example: 106.5
+        reembolso_id:
+          type: string
+          description: Identificador del reembolso monetario ante cancelación o compensación Saga.
+          example: REF-AUTO-9921
+        monto_reembolsado:
+          type: number
+          description: Monto reembolsado al 100% en USD.
+          example: 106.5
+        cooldown_info:
+          $ref: '#/components/schemas/CooldownStatusDto'
+    CheckinDigitalResponseV2:
+      type: object
+      properties:
+        reserva_id:
+          type: string
+          example: CAR7849B
+        pnr:
+          type: string
+          example: CAR7849B
+        checkin_status:
+          type: string
+          example: CHECKIN_COMPLETED
+        fast_track_pickup:
+          type: boolean
+          example: true
+        mensaje:
+          type: string
+          example: Check-in digital exitoso. Presenta tu código QR en el mostrador para retiro express.
+        voucher_qr_data:
+          type: string
+          example: AUTOS-CHECKIN-CAR7849B-VERIFIED-1723456789
+        requisitos:
+          type: array
+          items:
+            type: string
+    CheckinEntregaRequestV2:
+      type: object
+      required:
+        - licencia_conducir
+        - km_salida
+      properties:
+        licencia_conducir:
+          type: string
+          description: Número de licencia física presentada en mostrador
+          example: '1723456789'
+        km_salida:
+          type: integer
+          description: Lectura del odómetro al momento de entregar las llaves
+          example: 12500
+        tecnico_entrega:
+          type: string
+          description: Nombre o ID del agente que formaliza la entrega
+          example: Roberto Paredes (Agente Mostrador UIO)
+    CheckinEntregaResponseV2:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        order_id:
+          type: string
+          example: CAR7849B
+        pnr:
+          type: string
+          example: CAR7849B
+        estado_orden:
+          type: string
+          example: ENTREGADO
+        km_salida:
+          type: integer
+          example: 12500
+        licencia_verificada:
+          type: string
+          example: '1723456789'
+        mensaje:
+          type: string
+          example: Llaves entregadas al conductor. Auto en tránsito (Fase ENTREGADO).
+    CheckinDevolucionRequestV2:
+      type: object
+      required:
+        - km_retorno
+      properties:
+        km_retorno:
+          type: integer
+          description: Odómetro al devolver el auto (debe ser >= km_salida)
+          example: 12950
+        nivel_combustible:
+          type: integer
+          description: Porcentaje de combustible de 0 a 100
+          example: 100
+        observaciones:
+          type: string
+          example: Inspección conforme. Sin rayones ni novedades mecánicas.
+    CheckinDevolucionResponseV2:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        order_id:
+          type: string
+          example: CAR7849B
+        pnr:
+          type: string
+          example: CAR7849B
+        estado_orden:
+          type: string
+          example: COMPLETADA
+        km_retorno:
+          type: integer
+          example: 12950
+        km_recorridos:
+          type: integer
+          example: 450
+        cooldown:
+          $ref: '#/components/schemas/DevolucionAutoResponseV2'
+        alerta_mantenimiento:
+          type: string
+          example: Kilometraje en rango normal.
+    DevolucionAutoResponseV2:
+      type: object
+      properties:
+        auto_id:
+          type: string
+          example: auto-spark-01
+        vehiculo:
+          type: string
+          example: Chevrolet Spark GT
+        estado:
+          $ref: '#/components/schemas/EstadoVehiculoEnum'
+        cooldown_horas:
+          type: integer
+          example: 2
+        disponible_desde:
+          type: string
+          format: date-time
+          example: '2026-10-22T15:00:00Z'
+        mensaje:
+          type: string
+          example: Vehículo en ciclo de limpieza y desinfección. Estará disponible en 2 horas.
+    RegistroMantenimientoRequestV2:
+      type: object
+      required:
+        - kilometraje_registrado
+        - nivel_combustible
+        - tecnico_id
+      properties:
+        tecnico_id:
+          type: string
+          example: tec-rosero-01
+        kilometraje_registrado:
+          type: integer
+          example: 10250
+        nivel_combustible:
+          type: integer
+          description: Porcentaje de combustible de 0 a 100
+          example: 100
+        condiciones_carroceria:
+          type: string
+          example: Sin abolladuras. Rasguño leve en paragolpes trasero derecho.
+        estado_neumaticos:
+          type: string
+          example: BUENO
+        observaciones:
+          type: string
+          example: Cambio de aceite y filtro realizado.
+        mantenimiento_realizado:
+          type: boolean
+          default: false
+        nuevo_proximo_mantenimiento_km:
+          type: integer
+          example: 15000
+    RegistroMantenimientoResponseV2:
+      type: object
+      properties:
+        auto_id:
+          type: string
+          example: auto-spark-01
+        marca_modelo:
+          type: string
+          example: Chevrolet Spark GT
+        kilometraje_actual:
+          type: integer
+          example: 10250
+        proximo_mantenimiento_km:
+          type: integer
+          example: 10000
+        mantenimiento_requerido:
+          type: boolean
+          example: true
+        alerta_preventiva:
+          type: string
+          example: 'ALERTA PREVENTIVA: El vehículo ha superado el límite de 10000 km. Mantenimiento requerido.'
+        nivel_combustible:
+          type: string
+          example: 100%
+        bitacora_id:
+          type: string
+          example: BIT-AUTO-01
+        timestamp:
+          type: string
+          format: date-time
+    ContratoPromocionesRequestV2:
+      type: object
+      required:
+        - permite_promociones
+        - porcentaje_descuento_maximo
+      properties:
+        permite_promociones:
+          type: boolean
+          description: ¿Acepta participar en combos turísticos combinados con Booking Prototipo? (Cátedra RDA2 §9)
+          example: true
+        porcentaje_descuento_maximo:
+          type: number
+          description: Porcentaje máximo de descuento autorizado sobre tarifa diaria (0 a 100)
+          example: 15
+        destinos_habilitados:
+          type: array
+          items:
+            type: string
+          example:
+            - Quito
+            - Guayaquil
+            - Cuenca
+        vigencia_hasta:
+          type: string
+          format: date
+          example: '2026-12-31'
+        condiciones_combo:
+          type: string
+          example: Descuento autorizado del 15% en combos multivertical con hotel o vuelo.
+    ContratoPromocionesResponseV2:
+      type: object
+      properties:
+        proveedor_codigo:
+          type: string
+          example: NODE_AUT_LOCAL
+        nombre_socio:
+          type: string
+          example: Renta Autos Ecuador (Flota Partner)
+        vertical:
+          type: string
+          example: AUTOS
+        permite_promociones:
+          type: boolean
+          example: true
+        porcentaje_descuento_maximo:
+          type: number
+          example: 15
+        destinos_habilitados:
+          type: array
+          items:
+            type: string
+          example:
+            - Quito
+            - Guayaquil
+            - Cuenca
+            - Manta
+        vigencia_hasta:
+          type: string
+          format: date
+          example: '2026-12-31'
+        condiciones_combo:
+          type: string
+          example: Descuento autorizado del 15% en combos multivertical con hotel o vuelo.
+    AutosHealthResponseV2:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - HEALTHY
+            - DOWN
+            - DEGRADED
+          example: HEALTHY
+        nodo_id:
+          type: string
+          example: NODE_AUT_LOCAL
+        nombre_proveedor:
+          type: string
+          example: Renta Autos Ecuador (Flota Partner)
+        vertical:
+          type: string
+          example: AUTOS
+        version:
+          type: string
+          example: 2.0.0
+        uptime_seconds:
+          type: integer
+          example: 8420
+        latencia_ms:
+          type: integer
+          example: 25
+        circuit_breaker_estado:
+          type: string
+          example: CLOSED
+        cooldown_activo_count:
+          type: integer
+          example: 1
+        total_vehiculos:
+          type: integer
+          example: 5
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-10-22T16:40:00Z'
+    AutosEventosResponseV2:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+        metadata:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 1
+            timestamp:
+              type: string
+              format: date-time
+    CloudEventAutoOrderConfirmed:
+      type: object
+      description: >-
+        Evento emitido a RabbitMQ ('booking.events' / routing key 'auto.order.confirmed') y Apache Kafka
+        ('topic-ordenes-b2b')
+      required:
+        - specversion
+        - type
+        - source
+        - id
+        - time
+        - correlation_id
+        - data
+      properties:
+        specversion:
+          type: string
+          example: '1.0'
+        type:
+          type: string
+          example: ec.edu.epn.booking.autos.order.confirmed
+        source:
+          type: string
+          example: /microservices/ms-autos
+        id:
+          type: string
+          example: evt-car-ord-7762
+        time:
+          type: string
+          format: date-time
+          example: '2026-10-22T11:00:00Z'
+        correlation_id:
+          type: string
+          example: corr-autos-987654
+        datacontenttype:
+          type: string
+          example: application/json
+        data:
+          type: object
+          properties:
+            order_id:
+              type: string
+            pnr:
+              type: string
+            auto_id:
+              type: string
+            total_price:
+              type: number
+            nuevo_estado_auto:
+              type: string
+              example: RESERVADO
+    CloudEventAutoCleaningCooldownStarted:
+      type: object
+      description: Evento emitido al iniciar el cooldown de 2 horas tras devolución
+      required:
+        - specversion
+        - type
+        - source
+        - id
+        - time
+        - data
+      properties:
+        specversion:
+          type: string
+          example: '1.0'
+        type:
+          type: string
+          example: ec.edu.epn.booking.autos.cooldown.started
+        source:
+          type: string
+          example: /microservices/ms-autos
+        id:
+          type: string
+        time:
+          type: string
+          format: date-time
+        correlation_id:
+          type: string
+        data:
+          type: object
+          properties:
+            auto_id:
+              type: string
+            estado:
+              type: string
+              example: EN_LIMPIEZA
+            cooldown_minutos:
+              type: integer
+              example: 120
+            disponible_desde:
+              type: string
+              format: date-time
+    CloudEventAutoMantenimientoAlerta:
+      type: object
+      description: Evento emitido al superarse el umbral de kilometraje de mantenimiento preventivo
+      required:
+        - specversion
+        - type
+        - source
+        - id
+        - time
+        - data
+      properties:
+        specversion:
+          type: string
+          example: '1.0'
+        type:
+          type: string
+          example: ec.edu.epn.booking.autos.mantenimiento.alerta
+        source:
+          type: string
+          example: /microservices/ms-autos
+        id:
+          type: string
+        time:
+          type: string
+          format: date-time
+        correlation_id:
+          type: string
+        data:
+          type: object
+          properties:
+            auto_id:
+              type: string
+            kilometraje_actual:
+              type: integer
+            proximo_mantenimiento_km:
+              type: integer
+            severidad:
+              type: string
+              example: WARNING
+    CloudEventAutoOrderCancelled:
+      type: object
+      description: Evento emitido durante la compensación Saga tras la cancelación de una orden de auto
+      required:
+        - specversion
+        - type
+        - source
+        - id
+        - time
+        - correlation_id
+        - data
+      properties:
+        specversion:
+          type: string
+          example: '1.0'
+        type:
+          type: string
+          example: ec.edu.epn.booking.autos.order.cancelled
+        source:
+          type: string
+          example: /microservices/ms-autos
+        id:
+          type: string
+          example: evt-car-canc-8831
+        time:
+          type: string
+          format: date-time
+          example: '2026-10-22T11:15:00Z'
+        correlation_id:
+          type: string
+          example: corr-autos-987654
+        datacontenttype:
+          type: string
+          example: application/json
+        data:
+          type: object
+          properties:
+            order_id:
+              type: string
+              example: CAR7849B
+            pnr:
+              type: string
+              example: CAR7849B
+            auto_id:
+              type: string
+              example: auto-spark-01
+            refund_id:
+              type: string
+              example: REF-AUTO-9921
+            refund_amount:
+              type: number
+              example: 106.5
+            estado_restituido:
+              type: string
+              example: DISPONIBLE
+    ProblemDetails:
+      type: object
+      description: Estructura canónica de error conforme a la especificación RFC 7807 (Problem Details for HTTP APIs).
+      required:
+        - type
+        - title
+        - status
+        - detail
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI absoluta o relativa que tipifica el error según la cátedra.
+          example: https://booking.epn.edu.ec/errors/cooldown-activo
+        title:
+          type: string
+          description: Resumen corto y legible del problema.
+          example: Vehículo en Cooldown de Limpieza Obligatorio (2 Horas)
+        status:
+          type: integer
+          description: Código de estado HTTP correspondiente (400, 401, 403, 404, 409, 422, 500, 503).
+          example: 409
+        detail:
+          type: string
+          description: Explicación detallada del motivo del fallo o contingencia.
+          example: >-
+            El vehículo auto-spark-01 se encuentra en fase de limpieza y desinfección obligatoria de 120 minutos tras su
+            retorno. Estará disponible nuevamente a las 14:30:00 UTC.
+        instance:
+          type: string
+          description: URI de la solicitud que originó el error.
+          example: /api/v2/autos/orders/create
+        code:
+          type: string
+          description: Código nemotécnico unívoco para evaluación algorítmica en el cliente o agregador.
+          example: VEHICLE_IN_CLEANING_COOLDOWN
+        correlation_id:
+          type: string
+          description: Identificador de correlación unívoco propagado para trazabilidad en logs físicos.
+          example: cid-aut-9921b
+        timestamp:
+          type: string
+          format: date-time
+          description: Marca de tiempo ISO 8601 UTC en que se generó la excepción.
+          example: '2026-10-24T18:30:00Z'
+        invalid_params:
+          type: array
+          description: Lista de parámetros o campos que no superaron la validación sintáctica o de negocio.
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                example: pickup_date
+              reason:
+                type: string
+                example: La fecha de recogida no puede ser en el pasado.
+    CooldownStatusDto:
+      type: object
+      description: >-
+        Información del temporizador de enfriamiento obligatorio de 2 horas (120 minutos) tras retorno del vehículo
+        (Cátedra RDA2 §5).
+      properties:
+        cooldown_horas:
+          type: integer
+          example: 2
+        cooldown_minutos:
+          type: integer
+          example: 120
+        activo:
+          type: boolean
+          example: true
+        inicio_cooldown:
+          type: string
+          format: date-time
+          example: '2026-10-24T12:00:00Z'
+        fin_cooldown:
+          type: string
+          format: date-time
+          example: '2026-10-24T14:00:00Z'
+        proximo_estado:
+          type: string
+          example: DISPONIBLE
+    MantenimientoLogRentaFacil:
+      type: object
+      properties:
+        bitacora_id:
+          type: string
+          example: BIT-AUTO-1A2B3C4D
+        vehicle_id:
+          type: string
+        tecnico_id:
+          type: string
+        registrado_por:
+          type: string
+          description: sub del JWT
+        kilometraje_registrado:
+          type: integer
+        nivel_combustible:
+          type: integer
+        condiciones_carroceria:
+          type: string
+          nullable: true
+        estado_neumaticos:
+          type: string
+          nullable: true
+        observaciones:
+          type: string
+          nullable: true
+        mantenimiento_realizado:
+          type: boolean
+        proximo_mantenimiento_km:
+          type: integer
+        alerta_emitida:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          example: admin@rentafacil.ec
+        password:
+          type: string
+          example: Admin12345
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - first_name
+        - last_name
+        - email
+        - phone
+        - national_id
+        - password
+      properties:
+        first_name:
+          type: string
+          example: Ana
+        last_name:
+          type: string
+          example: Torres
+        email:
+          type: string
+          example: ana@example.com
+        phone:
+          type: string
+          example: '0983563584'
+        national_id:
+          type: string
+          description: Cedula ecuatoriana (10 digitos)
+          example: '1710034065'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+    TokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+        - scope
+        - user
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          example: 86400
+        scope:
+          type: string
+          example: autos:read autos:book autos:cancel autos:webhooks
+        user:
+          type: object
+          properties:
+            email:
+              type: string
+            role:
+              type: string
+              enum:
+                - client
+                - admin
+            first_name:
+              type: string
+            last_name:
+              type: string
+    VehicleStatus:
+      type: string
+      description: |
+        AVAILABLE: reservable. RESERVED: rentado (tiene una orden activa). WASHING: en lavado
+        tras la devolucion, hasta wash_until. MAINTENANCE / INACTIVE: fuera de servicio.
+      enum:
+        - AVAILABLE
+        - RESERVED
+        - WASHING
+        - MAINTENANCE
+        - INACTIVE
+    VehicleAdmin:
+      type: object
+      properties:
+        vehicle_id:
+          type: string
+          example: VEH-1001
+        make:
+          type: string
+          example: Toyota
+        model:
+          type: string
+          example: Corolla
+        year:
+          type: integer
+          example: 2023
+        plate:
+          type: string
+          example: PBA-1001
+        color:
+          type: string
+          nullable: true
+        seats:
+          type: integer
+        doors:
+          type: integer
+        bag_capacity:
+          type: integer
+        transmission:
+          type: string
+          enum:
+            - manual
+            - automatica
+        fuel_type:
+          type: string
+          enum:
+            - gasolina
+            - diesel
+            - hibrido
+            - electrico
+        car_type:
+          type: string
+          enum:
+            - Compacto
+            - Sedan
+            - SUV
+            - Camioneta
+            - Lujo
+        air_conditioning:
+          type: boolean
+        price_per_day:
+          type: number
+          example: 45
+        description:
+          type: string
+          nullable: true
+        main_image_url:
+          type: string
+          format: uri
+          nullable: true
+        status:
+          $ref: '#/components/schemas/VehicleStatus'
+        wash_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Fin del lavado post-devolucion (solo con status WASHING)
+        depot_id:
+          type: integer
+        supplier_id:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    DepotAdmin:
+      type: object
+      properties:
+        depot_id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          example: RentaFacil Aeropuerto Quito
+        city:
+          type: string
+          example: Quito
+        address:
+          type: string
+          nullable: true
+        airport:
+          type: string
+          nullable: true
+          example: UIO
+        city_id:
+          type: integer
+          nullable: true
+        latitude:
+          type: number
+          nullable: true
+        longitude:
+          type: number
+          nullable: true
+        score:
+          type: number
+          example: 4.5
+        active:
+          type: boolean
+    SupplierAdmin:
+      type: object
+      properties:
+        supplier_id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          example: RentaFacil Prime
+        brand:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+    OrderAdminView:
+      type: object
+      description: Fila completa de la tabla orders (vista del administrador).
+      properties:
+        order_id:
+          type: string
+          format: uuid
+          readOnly: true
+        locator:
+          type: string
+          example: RENTAFACIL-A1B2C3
+        status:
+          type: string
+          enum:
+            - CONFIRMED
+            - CANCELLED
+            - PENDING
+        vehicle_id:
+          type: string
+        owner_sub:
+          type: string
+          nullable: true
+        hold_id:
+          type: string
+          nullable: true
+        order_preview_id:
+          type: string
+          nullable: true
+        payment_reference:
+          type: string
+          nullable: true
+        vehicle_details:
+          type: object
+          additionalProperties: true
+        route_details:
+          type: object
+          additionalProperties: true
+        driver_details:
+          type: object
+          nullable: true
+          additionalProperties: true
+        extras:
+          type: array
+          items:
+            type: string
+        total_price:
+          type: number
+        currency:
+          type: string
+          example: USD
+        returned_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Fecha de devolucion del vehiculo
+        returned_by_sub:
+          type: string
+          nullable: true
+          description: sub del admin que registro la devolucion
+        creation_date:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    UserAdmin:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum:
+            - client
+            - admin
+        phone:
+          type: string
+          nullable: true
+        national_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    UserAdminInput:
+      type: object
+      properties:
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          description: Obligatoria al crear; opcional al editar
+        role:
+          type: string
+          enum:
+            - client
+            - admin
+          default: client
+        phone:
+          type: string
+        national_id:
+          type: string
+    ReturnResponse:
+      type: object
+      required:
+        - order
+        - vehicle
+      properties:
+        order:
+          type: object
+          required:
+            - order_id
+            - locator
+            - status
+            - returned_at
+            - returned_by_sub
+          properties:
+            order_id:
+              type: string
+              format: uuid
+            locator:
+              type: string
+            status:
+              type: string
+              enum:
+                - CONFIRMED
+              description: La devolucion no cancela la orden
+            vehicle_details:
+              type: object
+              additionalProperties: true
+            route_details:
+              type: object
+              additionalProperties: true
+            total_price:
+              type: number
+            currency:
+              type: string
+            creation_date:
+              type: string
+              format: date-time
+            owner_sub:
+              type: string
+              nullable: true
+            returned_at:
+              type: string
+              format: date-time
+            returned_by_sub:
+              type: string
+              example: admin@rentafacil.ec
+            _links:
+              type: object
+              additionalProperties:
+                type: string
+        vehicle:
+          type: object
+          nullable: true
+          properties:
+            vehicle_id:
+              type: string
+            status:
+              $ref: '#/components/schemas/VehicleStatus'
+            wash_until:
+              type: string
+              format: date-time
+              nullable: true
+      example:
+        order:
+          order_id: 3f1c2a9e-8b7d-4c6e-9a1b-2d3e4f5a6b7c
+          locator: RENTAFACIL-A1B2C3
+          status: CONFIRMED
+          total_price: 157.5
+          currency: USD
+          creation_date: '2026-10-15T14:00:00.000Z'
+          returned_at: '2026-10-19T15:30:00.000Z'
+          returned_by_sub: admin@rentafacil.ec
+        vehicle:
+          vehicle_id: VEH-1001
+          status: WASHING
+          wash_until: '2026-10-20T15:30:00.000Z'
+    GenericRecord:
+      type: object
+      description: Fila de vehicle_images, holds, order_previews o webhook_subscriptions.
+      additionalProperties: true
+    ProblemDetailsV1:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          enum:
+            - VALIDATION_FAILED
+            - CAR_NO_LONGER_AVAILABLE
+            - PRICE_CHANGED
+            - DEPOT_CLOSED
+            - DRIVER_AGE_RESTRICTION
+            - BOOKING_NOT_CONFIRMED
+            - CANCELLATION_NOT_ALLOWED
+            - RATE_LIMIT_EXCEEDED
+            - PAYMENT_REFERENCE_INVALID
+            - PAYMENT_NOT_AUTHORIZED
+        invalidParams:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              reason:
+                type: string
+  responses:
+    ProblemDetails400:
+      description: Solicitud incorrecta o parámetros de fecha/edad inválidos (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails401:
+      description: No autenticado o credenciales JWT/API-Key ausentes o inválidas (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails403:
+      description: Acceso restringido por rol insuficiente (requiere MANTENIMIENTO o ADMIN) (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails404:
+      description: Vehículo o reserva de auto no encontrada en la flota (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails409:
+      description: Conflicto de Idempotencia o vehículo en cooldown de limpieza de 2 horas (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails422:
+      description: Error de entidad no procesable o conductor menor de 18 años (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails500:
+      description: Error interno del servidor en telemetría de flota (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails503:
+      description: Agencia de alquiler externa no disponible (Circuit Breaker abierto) (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetailsV1_400:
+      description: Peticion invalida (invalidParams detalla los campos)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetailsV1'
+    ProblemDetailsV1_401:
+      description: Falta el JWT, expiro o las credenciales no son validas
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetailsV1'
+    ProblemDetailsV1_403:
+      description: El token no tiene el scope requerido
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetailsV1'
+    ProblemDetailsV1_404:
+      description: No encontrado
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetailsV1'
+    ProblemDetailsV1_409:
+      description: Conflicto con el estado actual (ej. registro con dependencias)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetailsV1'
+    ProblemDetailsV1_429:
+      description: Demasiadas peticiones
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetailsV1'
+  parameters:
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >-
+        Identificador único universal (UUID v4) generado por el cliente para garantizar idempotencia en la mutación
+        transaccional (IETF Draft). Evita duplicación de cobros o bloqueo indebido de vehículos ante reintentos de red.
+      schema:
+        type: string
+        format: uuid
+      example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+    XCorrelationIdHeader:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: >-
+        Identificador unívoco de trazabilidad distribuida cross-broker (Semana 8 & Consideraciones RDA2). Se propaga
+        entre peticiones HTTP, logs físicos estructurados y eventos de RabbitMQ / Apache Kafka.
+      schema:
+        type: string
+      example: cid-aut-9921b
+    XNodeIdHeader:
+      name: X-Node-Id
+      in: header
+      required: false
+      description: Identificador del nodo emisor de la petición (ej. node-booking-core-01).
+      schema:
+        type: string
+      example: node-booking-core-01
+    XRoleHeader:
+      name: X-Role
+      in: header
+      required: false
+      description: >-
+        Rol del usuario para control de acceso basado en roles (RBAC RDA2 §5). Valores admitidos: CLIENTE, ADMIN,
+        MANTENIMIENTO.
+      schema:
+        type: string
+        enum:
+          - CLIENTE
+          - ADMIN
+          - MANTENIMIENTO
+      example: MANTENIMIENTO
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: order_id (UUID)
+      schema:
+        type: string
+        format: uuid
+    GenericResource:
+      name: resource
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+          - vehicle-images
+          - holds
+          - order-previews
+          - webhooks
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Token JWT emitido conforme al estándar RFC 7519 para autenticación de usuarios y roles autorizados (CLIENTE,
+        ADMIN, MANTENIMIENTO).
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >-
+        Clave de API precompartida para comunicación máquina a máquina (M2M) e interconexión segura entre Booking
+        Prototipo y concesionarias de Renta de Autos.
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
