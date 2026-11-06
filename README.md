@@ -1,4 +1,4 @@
-# RentaFacil EC - Booking Prototipo (Reto 1 + Reto 2)
+# RentaFacil EC - Booking Prototipo (Reto 1 + Reto 2 + Reto 2 final v3)
 
 Implementación del **contrato oficial** `contracts/autos-openapi.yaml` (GDS Autos Core API v1.0.0) para el Reto 1 del proyecto integrador **Booking Prototipo** de la asignatura de Integración de Sistemas de la PUCE.
 
@@ -6,6 +6,109 @@ Implementación del **contrato oficial** `contracts/autos-openapi.yaml` (GDS Aut
 **Contrato:** `backend/contracts/autos-openapi.yaml` (copia exacta del repositorio oficial del profesor)
 **Arquitectura Reto 1:** Monolito API-first (NestJS) + Frontend SPA (React) + PostgreSQL
 **Reto 2:** contrato `backend/contracts/autos-openapi-v2.yaml` en `/api/v2`, gRPC `:50051`, CloudEvents a RabbitMQ con Transactional Outbox
+
+---
+
+## Reto 2 final — Contrato v3.0.0 + requerimiento v3.1 (Azure + Supabase + CloudAMQP)
+
+**Producción:** `https://rentafacil-autos-api.azurewebsites.net/api/v3`
+· Health: [`/api/v3/autos/health`](https://rentafacil-autos-api.azurewebsites.net/api/v3/autos/health)
+· Swagger v3: [`/api/v3/docs`](https://rentafacil-autos-api.azurewebsites.net/api/v3/docs)
+· Frontend: `https://booking-rentafacil-reto1.vercel.app` · Ficha para el profesor: `docs/FICHA_ACCESO_PROFESOR.md` · Changelog: `docs/CAMBIOS_v3.md`
+
+```
+                ┌──────────────────────── Booking Prototipo Central ─────────────────────────┐
+                │  REST POST /autos/orders/create (driver en inglés)   gRPC :50051 / REST     │
+                │  GET/POST /clientes      ◄── POST /reservas/{id}/checkin (fire-and-forget)  │
+                └───────┬──────────────────────────────▲─────────────────────▲───────────────┘
+                        │ HTTPS (X-API-Key, Idempotency-Key, X-Correlation-Id)│ PushStockUpdate
+ Vercel (React) ──JWT──►│                              │                     │ (fallback REST)
+                ┌───────▼──────────────────────────────┴─────────────────────┴───────────────┐
+                │ Azure App Service Linux B1 · rentafacil-autos-api (NestJS, Node 22)        │
+                │  /api/v1 (Reto 1) · /api/v2 (Reto 2) · /api/v3 (v3.0.0 + v3.1)              │
+                │  Logs [timestamp][NIVEL][MODULO] + X-Correlation-Id (AsyncLocalStorage)    │
+                └───────┬───────────────────────────────────────────┬────────────────────────┘
+                        │ TLS · Session pooler :5432                │ AMQPS (Transactional Outbox)
+        ┌───────────────▼────────────────────────┐   ┌──────────────▼───────────────────────┐
+        │ Supabase Postgres (Database-per-Service)│   │ CloudAMQP · exchange booking.events  │
+        │ db_identity db_catalog db_inventory     │   │ auto.order.confirmed/cancelled,      │
+        │ db_orders db_counter db_maintenance     │   │ auto.cooldown.*, stock.actualizado,  │
+        │ db_pricing db_outbox db_webhooks        │   │ auto.checkin.notified ...            │
+        └─────────────────────────────────────────┘   └──────────────────────────────────────┘
+```
+
+> **Región:** la guía pide `brazilsouth`, pero la suscripción *Azure for Students* de la PUCE tiene la política
+> "Allowed resource deployment regions" = `northcentralus, spaincentral, switzerlandnorth, canadacentral, mexicocentral`
+> (brazilsouth rechazada con `RequestDisallowedByAzure`) y sin cuota B1 en canadacentral ni northcentralus. Se desplegó en
+> **`mexicocentral`** (plan B1 Linux); el grupo de recursos `rg-rentafacil-autos-api` quedó registrado en brazilsouth.
+
+### Endpoints nuevos de `/api/v3`
+
+Todo el contrato `backend/contracts/autos-openapi-v3.yaml` (mismas rutas que v2) + extensiones v3.1:
+
+| Endpoint | Qué hace | Seguridad |
+|---|---|---|
+| `GET /api/v3/health`, `GET /api/v3/autos/health` | Semáforo LED con `dependencias` (BD, RabbitMQ, Booking) y `outbox_pendientes` (< 500 ms) | pública |
+| `POST /api/v3/autos/orders/create` (+ `/reservas`, `/orders`) | Reserva con `driver` en inglés (tolera `conductor`, `fecha_recogida`, `cobertura`); upsert del cliente y `fk_cliente` en la orden | X-API-Key / JWT |
+| `GET /api/v3/clientes?email=&identificacion=` | Cliente por email **o** cédula → `200 {client_id,nombre,email,identificacion}` / `404` (o `200 []` con `X-Prefer-Empty-Array: true`) | X-API-Key (tolerante) |
+| `POST /api/v3/clientes` | Crea → `201 {client_id}`; si email **o** cédula ya existen → `200` con el existente (nunca 409) | X-API-Key (tolerante) |
+| `GET /api/v3/autos/orders/buscar?q=` | Buscador del mostrador: `@` → email, 10 dígitos → cédula, si no → PNR | JWT ADMIN/MANTENIMIENTO |
+| `POST /api/v3/autos/orders/{id}/checkin-entrega` | Check-in físico → `CONFIRMADO_ASISTIDO` + notificación al Booking | JWT ADMIN/MANTENIMIENTO |
+| `POST /api/v3/admin/vehicles` | Alta de vehículo con stock 1 + `PushStockUpdate available_units=1` | JWT ADMIN |
+| `GET/PATCH /api/v3/admin/clientes[/:id]` | CRUD básico del panel `/admin/clientes` | JWT |
+
+**Errores canónicos v3 (RFC 7807):** `409 VEHICLE_UNAVAILABLE | OUT_OF_STOCK | VEHICLE_IN_CLEANING_COOLDOWN` (únicos que activan la Saga del Booking) ·
+`422 DRIVER_UNDERAGE | INVALID_DATES | INVALID_PAYLOAD` · `400 MALFORMED_REQUEST | IDEMPOTENCY_CONFLICT`. El código v2 original se conserva en `legacy_code`.
+
+### Clientes cross-platform v3.1 (ejemplos)
+
+```bash
+API=https://rentafacil-autos-api.azurewebsites.net/api/v3
+curl -X POST $API/clientes -H "Content-Type: application/json" -H "X-API-Key: $KEY" -H "X-Correlation-Id: booking-demo-1" \
+  -d '{"nombre":"Juan Perez","email":"juan@example.com","identificacion":"1710034065","telefono":"+593987654321"}'   # 201 {client_id}
+curl -X POST $API/clientes -H "Content-Type: application/json" \
+  -d '{"nombre":"Juan","email":"juan@example.com","identificacion":"1710034065"}'                                     # 200 existente
+curl "$API/clientes?email=juan@example.com" -H "X-API-Key: $KEY"                                                     # 200
+curl "$API/clientes?email=nadie@example.com" -H "X-Prefer-Empty-Array: true"                                         # 200 []
+```
+
+`origen` = `BOOKING` si el `X-Correlation-Id` empieza con `booking-`, llega `X-Source: BOOKING` o entra con X-API-Key; si no, `WEB`.
+Mientras `BOOKING_API_KEY` diga `PENDIENTE...`, las peticiones con cualquier X-API-Key (o sin ella, en clientes y reservas) se aceptan con un `WARN` en el log para que la demo no falle; con la clave del profesor configurada, una X-API-Key incorrecta responde 401.
+
+### Notificación de check-in al Booking central
+
+Al confirmar la entrega (`POST /api/v3/autos/orders/{id}/checkin-entrega` o el botón **Confirmar Entrega de Llaves / Check-in** de `/admin/mostrador`):
+
+```
+POST https://booking-core-api.azurewebsites.net/api/v3/reservas/{PNR}/checkin
+X-API-Key: <BOOKING_API_KEY> · X-Correlation-Id: <el del check-in> · Content-Type: application/json
+{ "external_order_id": "<PNR>", "client_id": "<uuid>", "estado": "CONFIRMADO_ASISTIDO", "admin_id": "<sub del JWT>",
+  "fecha_checkin": "<ISO 8601 UTC>", "observaciones": "Vehiculo entregado fisicamente con contrato y licencia validada" }
+```
+
+Fire-and-forget: primero se guarda en `db_outbox.outbox_booking_notifications`, el check-in local responde de inmediato y el POST sale en segundo plano (timeout 5 s, circuit breaker Opossum). Solo `2xx` con `{ "acknowledged": true }` cuenta como enviado; si falla se reintenta con backoff **1 s, 5 s, 15 s, 1 min, 5 min** (luego `FAILED`), se registra en `logs/error-*.log` y se emite el CloudEvent `auto.checkin.notified` (`success|failed`).
+
+### Observabilidad
+
+- Línea de log: `[YYYY-MM-DD HH:mm:ss.SSS] [INFO|WARN|ERROR] [MODULO] mensaje | key=value | correlation=<id>` en consola (Azure Log Stream: `az webapp log tail -g rg-rentafacil-autos-api -n rentafacil-autos-api`) y en `logs/combined-YYYY-MM-DD.log` (rotación diaria con winston-daily-rotate-file; en Azure `/home/LogFiles/app`).
+- Módulos: `[CLIENTES]`, `[RESERVAS]`, `[MOSTRADOR]`, `[CHECKIN]`, `[BOOKING-NOTIFY]`, `[GRPC]`, `[RABBITMQ]`, `[OUTBOX]`, `[DB]`, `[AUTH]`.
+- `X-Correlation-Id`: se lee o se genera (UUID v4), vive en `AsyncLocalStorage`, sale en todos los logs, en la respuesta, en las llamadas HTTP salientes al Booking y en los CloudEvents (`correlation_id`).
+
+### Base de datos Supabase (Database-per-Service)
+
+`npm run migrate:supabase` (en `backend/`) crea los 9 esquemas y sus tablas, copia datos legados de `public` o de `LEGACY_DATABASE_URL` (Neon) y siembra 12 vehículos, agencias, proveedores, `admin@rentafacil.ec / Admin12345`, `tecnico@rentafacil.ec / Tecnico12345` (MANTENIMIENTO), `maria@example.com / Cliente12345` y el contrato B2B (15 %). Es idempotente. `SUPABASE_URL` reemplaza a `DATABASE_URL` (que queda como respaldo).
+
+### Despliegue en Azure
+
+```bash
+cd backend
+npm run build && python scripts/build-azure-zip.py      # zip con rutas POSIX y node_modules de producción
+az webapp deploy -g rg-rentafacil-autos-api -n rentafacil-autos-api --src-path dist-azure.zip --type zip --async true
+```
+
+Configuración aplicada: B1 Linux, Node 22 LTS, Always On, startup `node dist/main.js`, `SCM_DO_BUILD_DURING_DEPLOYMENT=false`, `ENABLE_ORYX_BUILD=false`, `WEBSITES_CONTAINER_START_TIME_LIMIT=600`, `GRPC_ENABLED=false` (en B1 el 50051 no es público: RentaFacil es **cliente** gRPC del Booking y no expone servidor gRPC), `SEED_ON_START=true`, CORS de Booking, Vercel y localhost.
+
+**Frontend (Vercel):** `VITE_API_URL=https://rentafacil-autos-api.azurewebsites.net/api/v3`. El cliente deriva de esa URL las bases `/api/v1`, `/api/v2` y `/api/v3`, así que las pantallas existentes siguen funcionando. Rutas nuevas: `/admin/mostrador` (buscador + botón de entrega), `/admin/clientes`, `/admin/vehiculos/nuevo`.
 
 ---
 
@@ -51,14 +154,16 @@ Datos para el formulario **"Nuevo Proveedor"** (`Microservicios & Integración` 
 |---|---|
 | Nombre | `RentaFacil EC` |
 | Equipo | `Anthony Rosero` |
-| URL base de la API | `https://rentafacil-api.onrender.com/api/v2` |
-| Tipo de servicio | `Autos` |
-| gRPC endpoint (si lo pide) | `rentafacil-grpc.onrender.com:50051` (o el que configuremos) |
-| Contrato OpenAPI (referencia) | `/api/v2/docs-json` |
+| URL base de la API | `https://rentafacil-autos-api.azurewebsites.net/api/v3` |
+| Health | `https://rentafacil-autos-api.azurewebsites.net/api/v3/autos/health` |
+| Swagger | `https://rentafacil-autos-api.azurewebsites.net/api/v3/docs` |
+| Tipo de servicio / Vertical | `Autos` / `AUTOS` |
+| Código de nodo | `NODE_AUT_RENTAFACIL` |
+| X-API-Key | la entrega el profesor al registrar el proveedor (`BOOKING_API_KEY` en Azure) |
 
-El botón **🔄 Recheck** llama `GET {URL_BASE}/autos/health`, que responde `nodo_id = NODE_AUT_RENTAFACIL`, `nombre_proveedor = RentaFacil EC`, `vertical = AUTOS`, `version = 2.0.0`. **📥 Sincronizar** consume `GET /autos` o `POST /autos/search`. CORS abierto para `https://booking.epn.edu.ec`, `http://localhost:3000`, `http://localhost:5173`, `http://localhost:4000` y el frontend en Vercel; se expone la cabecera `X-Correlation-Id`.
+El botón **🔄 Recheck** llama `GET {URL_BASE}/autos/health`, que responde `nodo_id = NODE_AUT_RENTAFACIL`, `nombre_proveedor = RentaFacil EC`, `vertical = AUTOS`, `version = 3.0.0` (en `/api/v3`; `/api/v2/autos/health` sigue respondiendo `2.0.0`). **📥 Sincronizar** consume `GET /autos` o `POST /autos/search`. CORS abierto para `https://booking.epn.edu.ec`, `http://localhost:3000`, `http://localhost:5173`, `http://localhost:4000` y el frontend en Vercel; se expone la cabecera `X-Correlation-Id`.
 
-> Nota: en Render Free el gRPC no se publica (ver arriba); el endpoint gRPC de la tabla aplica cuando se despliegue como servicio privado o en local (`localhost:50051`).
+> Nota: en Azure App Service B1 el puerto 50051 no es alcanzable desde Internet: RentaFacil actúa como **cliente** gRPC hacia `BOOKING_GRPC_HOST` (con fallback REST a `BOOKING_REST_STOCK_URL`).
 
 ---
 

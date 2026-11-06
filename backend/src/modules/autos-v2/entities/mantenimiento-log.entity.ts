@@ -1,10 +1,11 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import { Column, CreateDateColumn, Entity, Index, PrimaryColumn } from 'typeorm';
 
 /**
  * Bitacora auditable de POST /api/v2/autos/{id}/mantenimiento/registro (tabla mantenimiento_log
  * del diagrama de arquitectura).
  */
-@Entity('mantenimiento_log')
+@Entity({ schema: ESQUEMAS.MAINTENANCE, name: 'mantenimiento_log' })
 export class MantenimientoLog {
   @PrimaryColumn({ type: 'varchar', length: 40, name: 'bitacora_id' })
   bitacora_id: string;

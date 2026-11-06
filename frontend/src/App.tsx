@@ -18,6 +18,8 @@ import OrdersAdmin from './admin/OrdersAdmin';
 import UsuariosAdmin from './admin/UsuariosAdmin';
 import FlotaAdmin from './admin/FlotaAdmin';
 import MostradorAdmin from './admin/MostradorAdmin';
+import ClientesAdmin from './admin/ClientesAdmin';
+import VehiculoNuevoAdmin from './admin/VehiculoNuevoAdmin';
 import MantenimientoAdmin from './admin/MantenimientoAdmin';
 import PromocionesAdmin from './admin/PromocionesAdmin';
 import SaludAdmin from './admin/SaludAdmin';
@@ -73,6 +75,10 @@ export default function App() {
           }>
             <Route index element={<SoloAdmin><AdminDashboard /></SoloAdmin>} />
             <Route path="vehiculos" element={<SoloAdmin><VehiculosAdmin /></SoloAdmin>} />
+            {/* Evaluacion v3.1: alta con stock, clientes cross-platform y mostrador con boton de entrega */}
+            <Route path="vehiculos/nuevo" element={<SoloAdmin><VehiculoNuevoAdmin /></SoloAdmin>} />
+            <Route path="clientes" element={<ClientesAdmin />} />
+            <Route path="reservas" element={<MostradorAdmin />} />
             <Route path="depots" element={<SoloAdmin><DepotsAdmin /></SoloAdmin>} />
             <Route path="suppliers" element={<SoloAdmin><SuppliersAdmin /></SoloAdmin>} />
             <Route path="orders" element={<SoloAdmin><OrdersAdmin /></SoloAdmin>} />

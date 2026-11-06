@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Vehicle } from '../autos/entities/vehicle.entity';
 import { OutboxEvent } from './entities/outbox-event.entity';
 import { IdempotencyRecord } from './entities/idempotency-record.entity';
+import { GrpcLog } from './entities/grpc-log.entity';
 import { EventBusService } from './event-bus.service';
 import { OutboxService } from './outbox.service';
 import { IdempotencyService } from './idempotency.service';
@@ -17,7 +18,7 @@ import { StockGrpcController } from './grpc/stock-grpc.controller';
  * e idempotencia persistente.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Vehicle, OutboxEvent, IdempotencyRecord])],
+  imports: [TypeOrmModule.forFeature([Vehicle, OutboxEvent, IdempotencyRecord, GrpcLog])],
   controllers: [StockGrpcController],
   providers: [EventBusService, OutboxService, IdempotencyService, InventarioService, StockCacheService, StockPushClient],
   exports: [EventBusService, OutboxService, IdempotencyService, InventarioService, StockCacheService, StockPushClient],

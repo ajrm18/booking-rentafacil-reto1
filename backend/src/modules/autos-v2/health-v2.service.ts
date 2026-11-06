@@ -36,8 +36,8 @@ export class HealthV2Service {
         this.ds.query(
           `SELECT COUNT(*)::int AS total,
                   COUNT(*) FILTER (WHERE status = 'WASHING' AND wash_until > NOW())::int AS cooldown,
-                  (SELECT COUNT(*)::int FROM outbox_events WHERE publish_status = 'PENDING') AS pendientes
-             FROM vehicles`,
+                  (SELECT COUNT(*)::int FROM db_outbox.outbox_events WHERE publish_status = 'PENDING') AS pendientes
+             FROM db_catalog.vehicles`,
         ),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`BD sin respuesta en ${TIMEOUT_BD_MS} ms`)), TIMEOUT_BD_MS).unref()),
       ]);

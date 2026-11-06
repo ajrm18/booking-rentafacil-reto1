@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import {
   Column, CreateDateColumn, Entity, JoinColumn, ManyToOne,
   OneToMany, PrimaryColumn, UpdateDateColumn,
@@ -47,7 +48,7 @@ export const INTERVALO_MANTENIMIENTO_KM = 10000;
  * Inventario de vehiculos. Su vehicle_id es un string (Ej: VEH-1001) para respetar el
  * contrato components.schemas.CarSearchResponse.data.items.vehicle_id (type: string).
  */
-@Entity('vehicles')
+@Entity({ schema: ESQUEMAS.CATALOG, name: 'vehicles' })
 export class Vehicle {
   @PrimaryColumn({ type: 'varchar', length: 40 })
   vehicle_id: string;

@@ -34,5 +34,7 @@ import { IdempotencyV2Guard } from './idempotency-v2.guard';
     CatalogoV2Service, ReservasV2Service, FlotaV2Service, PromocionesV2Service, HealthV2Service,
     V2AuthGuard, IdempotencyV2Guard,
   ],
+  // /api/v3 reutiliza la logica de v2 (misma BD, mismas reglas)
+  exports: [CatalogoV2Service, ReservasV2Service, FlotaV2Service, PromocionesV2Service, HealthV2Service],
 })
 export class AutosV2Module {}

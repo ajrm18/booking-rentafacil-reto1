@@ -9,6 +9,7 @@ import { InventarioService } from '../integracion/inventario.service';
 import { OutboxService } from '../integracion/outbox.service';
 import { IdempotencyService } from '../integracion/idempotency.service';
 import { EVENTOS } from '../integracion/nodo';
+import { log } from '../../common/app-logger';
 import { AuthV2, veTodo } from './v2-auth.guard';
 import { invalido, ParametroInvalido, problema } from './problema';
 import { assertReservable, calcularPrecio, evaluarEdad, FRANJA_30_MIN, normalizarCobertura, parsearPeriodo } from './reglas';
@@ -24,6 +25,11 @@ const entero = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string
 const normLicencia = (s: string) => s.replace(/[\s-]/g, '').toUpperCase();
 
 interface Ctx { auth: AuthV2; idempotencyKey: string; correlationId: string }
+
+/** Opciones de /api/v3: upsert del cliente cross-platform antes de crear la orden. */
+export interface OpcionesCrear {
+  resolverCliente?: (conductor: Record<string, any>) => Promise<string | null>;
+}
 
 /** Reservas (Saga hold -> create -> cancel) y triple check-in de /api/v2 (HU-AUT-06). */
 @Injectable()
@@ -59,7 +65,7 @@ export class ReservasV2Service {
   //  POST /autos/orders/create (y alias /autos/reservas)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async crear(body: any, ctx: Ctx) {
+  async crear(body: any, ctx: Ctx, opciones: OpcionesCrear = {}) {
     const b = body && typeof body === 'object' ? body : {};
     const vehicleId = texto(b.vehicle_id ?? b.auto_id);
 
@@ -69,22 +75,26 @@ export class ReservasV2Service {
 
     const errores: ParametroInvalido[] = [];
     if (!vehicleId) errores.push({ name: 'vehicle_id', reason: 'Campo obligatorio (o su alias auto_id)' });
-    const c = b.conductor && typeof b.conductor === 'object' ? b.conductor : null;
-    if (!c) errores.push({ name: 'conductor', reason: 'Campo obligatorio' });
+    // Contrato v3: `driver` en ingles; Ley de Postel: tambien `conductor` y sus alias en espanol
+    const enIngles = !!(b.driver && typeof b.driver === 'object');
+    const c = enIngles ? b.driver : b.conductor && typeof b.conductor === 'object' ? b.conductor : null;
+    const pref = enIngles ? 'driver' : 'conductor';
+    if (!c) errores.push({ name: 'driver', reason: 'Campo obligatorio (o su alias conductor)' });
     const conductor = {
-      nombre: texto(c?.nombre ?? c?.nombre_completo ?? c?.full_name),
+      nombre: texto(c?.full_name ?? c?.nombre ?? c?.nombre_completo),
       email: texto(c?.email ?? c?.correo).toLowerCase(),
-      telefono: texto(c?.telefono ?? c?.phone),
-      licencia_conducir: texto(c?.licencia_conducir),
-      pais_licencia: texto(c?.pais_licencia) || null,
-      edad: c?.edad ?? c?.edad_conductor ?? c?.driver_age ?? null,
-      numero_vuelo: texto(c?.numero_vuelo) || null,
+      telefono: texto(c?.phone ?? c?.telefono),
+      licencia_conducir: texto(c?.license_number ?? c?.licencia_conducir),
+      pais_licencia: texto(c?.country_license ?? c?.pais_licencia) || null,
+      edad: c?.age ?? c?.edad ?? c?.edad_conductor ?? c?.driver_age ?? null,
+      numero_vuelo: texto(c?.flight_number ?? c?.numero_vuelo) || null,
+      identificacion: texto(c?.identificacion ?? c?.documento_identidad ?? c?.cedula ?? c?.document_id) || null,
     };
     if (c) {
-      if (conductor.nombre.length < 3) errores.push({ name: 'conductor.nombre', reason: 'Nombre del conductor obligatorio (mínimo 3 caracteres)' });
-      if (!EMAIL.test(conductor.email)) errores.push({ name: 'conductor.email', reason: 'Correo electrónico válido obligatorio' });
-      if (!/^\+?[0-9\s-]{7,20}$/.test(conductor.telefono)) errores.push({ name: 'conductor.telefono', reason: 'Teléfono obligatorio (7 a 20 dígitos)' });
-      if (!/^[A-Za-z0-9-]{5,20}$/.test(conductor.licencia_conducir)) errores.push({ name: 'conductor.licencia_conducir', reason: 'Número de licencia obligatorio (5 a 20 caracteres alfanuméricos)' });
+      if (conductor.nombre.length < 3) errores.push({ name: `${pref}.full_name`, reason: 'Nombre del conductor obligatorio (mínimo 3 caracteres)' });
+      if (!EMAIL.test(conductor.email)) errores.push({ name: `${pref}.email`, reason: 'Correo electrónico válido obligatorio' });
+      if (!/^\+?[0-9\s-]{7,20}$/.test(conductor.telefono)) errores.push({ name: `${pref}.phone`, reason: 'Teléfono obligatorio (7 a 20 dígitos)' });
+      if (!/^[A-Za-z0-9-]{5,20}$/.test(conductor.licencia_conducir)) errores.push({ name: `${pref}.license_number`, reason: 'Número de licencia obligatorio (5 a 20 caracteres alfanuméricos)' });
     }
     const horas = { pickup_time: texto(b.hora_recogida ?? b.pickup_time) || '10:00', dropoff_time: texto(b.hora_devolucion ?? b.dropoff_time) || '10:00' };
     for (const [k, alias] of [['pickup_time', 'hora_recogida'], ['dropoff_time', 'hora_devolucion']] as const) {
@@ -98,8 +108,9 @@ export class ReservasV2Service {
       { pickup_date: texto(b.pickup_date ?? b.fecha_recogida), dropoff_date: texto(b.dropoff_date ?? b.fecha_devolucion), ...horas },
       { pickup_date: 'pickup_date', dropoff_date: 'dropoff_date', pickup_time: 'hora_recogida', dropoff_time: 'hora_devolucion' },
     );
-    const edad = evaluarEdad(conductor.edad, 'conductor.edad');
-    const cobertura = normalizarCobertura(b.tipo_cobertura ?? b.cobertura, b.tipo_cobertura !== undefined ? 'tipo_cobertura' : 'cobertura');
+    const edad = evaluarEdad(conductor.edad, `${pref}.age`);
+    const campoCobertura = b.tipo_cobertura !== undefined ? 'tipo_cobertura' : b.coverage_type !== undefined ? 'coverage_type' : 'cobertura';
+    const cobertura = normalizarCobertura(b.tipo_cobertura ?? b.coverage_type ?? b.cobertura, campoCobertura);
 
     await this.inventario.liberarCooldownsVencidos(ctx.correlationId);
     const v = await this.vehicles.findOne({ where: { vehicle_id: vehicleId } });
@@ -109,6 +120,9 @@ export class ReservasV2Service {
     const desglose = calcularPrecio(Number(v.price_per_day), periodo.dias, cobertura, edad);
     const lugarRecogida = texto(b.pickup_location ?? b.lugar_recogida) || null;
     const lugarDevolucion = texto(b.dropoff_location ?? b.lugar_devolucion) || lugarRecogida;
+
+    // v3.1: upsert del cliente cross-platform (email/identificacion) antes de crear la orden
+    const fkCliente = opciones.resolverCliente ? await opciones.resolverCliente(conductor) : null;
 
     let guardada: Order;
     try {
@@ -141,10 +155,11 @@ export class ReservasV2Service {
           idempotency_key: ctx.idempotencyKey,
           tipo_cobertura: cobertura,
           desglose_precio: desglose,
+          fk_cliente: fkCliente,
         }));
         await this.outbox.registrar(m, EVENTOS.ORDEN_CONFIRMADA, {
           order_id: o.order_id, pnr: o.locator, auto_id: v.vehicle_id, total_price: desglose.total,
-          tipo_cobertura: cobertura, nuevo_estado_auto: 'RESERVADO',
+          tipo_cobertura: cobertura, nuevo_estado_auto: 'RESERVADO', client_id: fkCliente,
         }, { subject: o.order_id, correlationId: ctx.correlationId });
         await this.inventario.registrarCambio(m, { vehicle_id: v.vehicle_id, status: 'RESERVED' }, 'order.confirmed', ctx.correlationId, periodo.pickup);
         return o;
@@ -158,6 +173,7 @@ export class ReservasV2Service {
       throw e;
     }
     this.inventario.notificarStock({ vehicle_id: v.vehicle_id, status: 'RESERVED' }, periodo.pickup);
+    log.info('RESERVAS', `POST /orders/create vehicle_id=${v.vehicle_id} -> PNR=${guardada.locator} | 201`, { client_id: fkCliente, total: desglose.total });
     return aOrdenV2(guardada, { ...v, status: 'RESERVED' } as Vehicle);
   }
 

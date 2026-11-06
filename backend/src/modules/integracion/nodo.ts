@@ -26,6 +26,8 @@ export const EVENTOS = {
   COOLDOWN_TERMINADO: 'auto.cooldown.ended',
   MANTENIMIENTO_ALERTA: 'auto.mantenimiento.alerta',
   STOCK_ACTUALIZADO: 'stock.actualizado',
+  /** v3.1: resultado de la notificacion HTTP del check-in de entrega al Booking central. */
+  CHECKIN_NOTIFICADO: 'auto.checkin.notified',
 } as const;
 export type TipoEvento = typeof EVENTOS[keyof typeof EVENTOS];
 

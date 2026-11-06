@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { log } from '../../common/app-logger';
+import { correlationActual } from '../../common/request-context';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, LessThanOrEqual, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
@@ -55,7 +57,7 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
       ce_type: ceTypeDe(routingKey),
       source: NODO.ceSource,
       subject: opts.subject ?? null,
-      correlation_id: opts.correlationId ?? null,
+      correlation_id: opts.correlationId ?? correlationActual() ?? null,
       data: { ...data, nodo_id: NODO.id },
       publish_status: 'PENDING',
     }));
@@ -133,8 +135,9 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
 
     if (!this.bus.habilitado) {
       // Modo degradado: sin broker, el evento queda registrado en el log y en el feed
-      for (const e of pendientes) this.logger.log(`[${e.routing_key}] ${JSON.stringify(this.aCloudEvent(e))}`);
+      for (const e of pendientes) log.info('RABBITMQ', `publish ${e.routing_key} -> LOGGED (bus deshabilitado)`, { event_id: e.event_id, correlation: e.correlation_id ?? e.event_id });
       await this.repo.update({ seq: In(pendientes.map((e) => e.seq)) }, { publish_status: 'LOGGED', published_at: new Date() });
+      log.info('OUTBOX', `procesados=${pendientes.length} pendientes=0`, { modo: 'LOG_ONLY' });
       return pendientes.length;
     }
 
@@ -143,6 +146,7 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.bus.publicar(e.routing_key, this.aCloudEvent(e));
         await this.repo.update({ seq: e.seq }, { publish_status: 'PUBLISHED', published_at: new Date(), attempts: e.attempts + 1 });
+        log.info('RABBITMQ', `publish ${e.routing_key} -> DELIVERED`, { event_id: e.event_id, correlation: e.correlation_id ?? e.event_id });
         publicados++;
       } catch (err: any) {
         const intentos = e.attempts + 1;
@@ -151,9 +155,11 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
           last_error: String(err?.message ?? err).slice(0, 300),
           publish_status: intentos >= MAX_INTENTOS ? 'FAILED' : 'PENDING',
         });
+        log.warn('RABBITMQ', `publish ${e.routing_key} -> ERROR`, { event_id: e.event_id, intentos, error: String(err?.message ?? err).slice(0, 120), correlation: e.correlation_id ?? e.event_id });
         break; // broker caido: se reintenta en el siguiente tick, respetando el orden
       }
     }
+    log.info('OUTBOX', `procesados=${publicados} pendientes=${pendientes.length - publicados}`);
     return publicados;
   }
 }

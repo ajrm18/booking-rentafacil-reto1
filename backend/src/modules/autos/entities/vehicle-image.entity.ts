@@ -1,9 +1,10 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import {
   Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Vehicle } from './vehicle.entity';
 
-@Entity('vehicle_images')
+@Entity({ schema: ESQUEMAS.CATALOG, name: 'vehicle_images' })
 export class VehicleImage {
   @PrimaryGeneratedColumn()
   id: number;

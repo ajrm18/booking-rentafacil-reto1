@@ -52,6 +52,6 @@ const RMQ = process.env.TEST_RABBITMQ_URL;
 
     const h = await request(t.app.getHttpServer()).get('/api/v2/autos/health');
     expect(h.body.dependencias.rabbitmq).toBe('UP');
-    await t.ds.query('DELETE FROM outbox_events WHERE event_id = $1', [e.event_id]);
+    await t.ds.query('DELETE FROM db_outbox.outbox_events WHERE event_id = $1', [e.event_id]);
   });
 });

@@ -65,11 +65,11 @@ export async function createFixtures(ds: DataSource, overrides: Partial<Vehicle>
 }
 
 export async function dropFixtures(ds: DataSource, f: Awaited<ReturnType<typeof createFixtures>>) {
-  await ds.query('DELETE FROM orders WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
-  await ds.query('DELETE FROM order_previews WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
-  await ds.query('DELETE FROM holds WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
-  await ds.query("DELETE FROM outbox_events WHERE subject = $1 OR data->>'auto_id' = $1", [f.vehicle.vehicle_id]);
-  await ds.query('DELETE FROM mantenimiento_log WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
+  await ds.query('DELETE FROM db_orders.orders WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
+  await ds.query('DELETE FROM db_orders.order_previews WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
+  await ds.query('DELETE FROM db_orders.holds WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
+  await ds.query("DELETE FROM db_outbox.outbox_events WHERE subject = $1 OR data->>'auto_id' = $1", [f.vehicle.vehicle_id]);
+  await ds.query('DELETE FROM db_maintenance.mantenimiento_log WHERE vehicle_id = $1', [f.vehicle.vehicle_id]);
   await ds.getRepository(Vehicle).delete({ vehicle_id: f.vehicle.vehicle_id });
   await ds.getRepository(Depot).delete({ depot_id: f.depot.depot_id });
   await ds.getRepository(Supplier).delete({ supplier_id: f.supplier.supplier_id });

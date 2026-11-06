@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 import { ColumnNumericTransformer } from '../../../common/transformers/column-numeric.transformer';
 
@@ -5,7 +6,7 @@ import { ColumnNumericTransformer } from '../../../common/transformers/column-nu
  * Acuerdo B2B de promociones y combos con el Booking (Catedra RDA2 §9). Una sola fila, la del
  * proveedor NODE_AUT_LOCAL; GET/PUT /api/v2/autos/promociones/contrato la leen y la actualizan.
  */
-@Entity('contrato_promociones_b2b')
+@Entity({ schema: ESQUEMAS.PRICING, name: 'contrato_promociones_b2b' })
 export class ContratoPromociones {
   @PrimaryColumn({ type: 'varchar', length: 40, name: 'proveedor_codigo' })
   proveedor_codigo: string;

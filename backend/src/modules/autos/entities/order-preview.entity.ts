@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import {
   Column, CreateDateColumn, Entity, PrimaryColumn,
 } from 'typeorm';
@@ -7,7 +8,7 @@ import { ColumnNumericTransformer } from '../../../common/transformers/column-nu
  * Previsualizacion de una orden (POST /orders/preview) que congela el precio
  * hasta que el cliente confirme con POST /orders/create.
  */
-@Entity('order_previews')
+@Entity({ schema: ESQUEMAS.ORDERS, name: 'order_previews' })
 export class OrderPreview {
   @PrimaryColumn({ type: 'varchar', length: 60 })
   order_preview_id: string;

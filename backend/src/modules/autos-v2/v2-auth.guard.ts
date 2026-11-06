@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { timingSafeEqual } from 'crypto';
 import { Request } from 'express';
 import { problema } from './problema';
+import { claveConfigurada } from '../../common/http-saliente';
 
 /** Roles del contrato v2 (BearerAuth: CLIENTE, ADMIN, MANTENIMIENTO) + B2B para el Booking por X-API-Key. */
 export type RolV2 = 'CLIENTE' | 'ADMIN' | 'MANTENIMIENTO' | 'B2B';
@@ -49,19 +50,38 @@ export class V2AuthGuard implements CanActivate {
 
   private autenticar(req: Request): AuthV2 {
     const apiKey = req.headers['x-api-key'] as string | undefined;
-    const esperada = process.env.BOOKING_API_KEY;
-    if (apiKey && esperada) {
-      const a = Buffer.from(apiKey), b = Buffer.from(esperada);
-      if (a.length === b.length && timingSafeEqual(a, b)) return { sub: 'b2b:booking-prototipo', rol: 'B2B', scopes: [] };
+    const esperadas = clavesApi();
+    if (apiKey && esperadas.length) {
+      if (claveValida(apiKey, esperadas)) return { sub: 'b2b:booking-prototipo', rol: 'B2B', scopes: [] };
       throw problema(401, 'UNAUTHORIZED', 'La X-API-Key no es válida.', { title: 'Credenciales inválidas' });
     }
+    return autenticarBearer(req, this.jwt);
+  }
+}
+
+/**
+ * X-API-Key aceptadas: BOOKING_API_KEY (precompartida con el Booking) y API_KEY_INTERNAL (propia).
+ * Un valor "PENDIENTE..." cuenta como no configurado.
+ */
+export function clavesApi(): string[] {
+  return [claveConfigurada(process.env.BOOKING_API_KEY), claveConfigurada(process.env.API_KEY_INTERNAL)].filter((k): k is string => !!k);
+}
+
+export function claveValida(apiKey: string, esperadas = clavesApi()): boolean {
+  const a = Buffer.from(apiKey.trim());
+  return esperadas.some((e) => { const b = Buffer.from(e); return a.length === b.length && timingSafeEqual(a, b); });
+}
+
+/** BearerAuth (JWT HS256 emitido por POST /api/v1/auth/token). */
+export function autenticarBearer(req: Request, jwt: JwtService): AuthV2 {
+  {
     const h = req.headers['authorization'] as string | undefined;
     if (!h || !h.startsWith('Bearer ')) {
       throw problema(401, 'UNAUTHORIZED', 'Envíe la cabecera Authorization: Bearer <JWT> (POST /api/v1/auth/token) o X-API-Key.',
         { title: 'Se requiere autenticación' });
     }
     try {
-      const payload: any = this.jwt.verify(h.slice(7).trim());
+      const payload: any = jwt.verify(h.slice(7).trim());
       return {
         sub: payload.sub, rol: rolDesdeToken(payload),
         scopes: Array.isArray(payload.scopes) ? payload.scopes : String(payload.scope ?? '').split(' ').filter(Boolean),

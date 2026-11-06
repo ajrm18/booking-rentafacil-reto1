@@ -148,9 +148,9 @@ export const COBERTURAS: Record<TipoCobertura, {
 export function normalizarCobertura(valor: unknown, campo = 'tipo_cobertura'): TipoCobertura {
   if (valor === undefined || valor === null || valor === '') return 'BASICA';
   const v = String(valor).toUpperCase();
-  if (v === 'BASICA') return 'BASICA';
+  if (v === 'BASICA' || v === 'BASIC') return 'BASICA';
   if (v === 'TOTAL' || v === 'PREMIUM') return 'TOTAL';
-  throw invalido([{ name: campo, reason: 'Debe ser BASICA o TOTAL' }]);
+  throw invalido([{ name: campo, reason: 'Debe ser BASIC (BASICA) o TOTAL' }]);
 }
 
 export interface Desglose {

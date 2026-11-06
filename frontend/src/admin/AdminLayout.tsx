@@ -4,14 +4,18 @@ import { useAuth } from '../context/AuthContext';
 /** `mechanic` = rol MANTENIMIENTO del contrato v2: solo ve las pantallas de patio y taller. */
 const ITEMS = [
   { to: '/admin', label: 'Panel de control', end: true },
+  { seccion: 'Evaluación v3.1' },
+  { to: '/admin/mostrador', label: '🔑 Mostrador · Entrega de llaves', tecnico: true, destacado: true },
+  { to: '/admin/vehiculos/nuevo', label: '＋ Nuevo vehículo con stock', destacado: true },
+  { to: '/admin/clientes', label: 'Clientes (cross-platform)', tecnico: true },
+  { seccion: 'Administración' },
   { to: '/admin/usuarios', label: 'Usuarios' },
-  { to: '/admin/vehiculos', label: 'Vehículos' },
+  { to: '/admin/vehiculos', label: 'Vehículos', end: true },
   { to: '/admin/depots', label: 'Agencias' },
   { to: '/admin/suppliers', label: 'Proveedores' },
   { to: '/admin/orders', label: 'Órdenes' },
   { seccion: 'Operación (Reto 2)' },
   { to: '/admin/flota', label: 'Flota en vivo', tecnico: true },
-  { to: '/admin/mostrador', label: 'Mostrador y patio', tecnico: true },
   { to: '/admin/mantenimiento', label: 'Mantenimiento', tecnico: true },
   { to: '/admin/promociones', label: 'Promociones B2B' },
   { to: '/admin/health', label: 'Salud y eventos' },
@@ -21,7 +25,7 @@ export default function AdminLayout() {
   const { user } = useAuth();
   const { pathname } = useLocation();
   const tecnico = user?.role === 'mechanic';
-  if (tecnico && pathname.replace(/\/$/, '') === '/admin') return <Navigate to="/admin/flota" replace />;
+  if (tecnico && pathname.replace(/\/$/, '') === '/admin') return <Navigate to="/admin/mostrador" replace />;
   const items = ITEMS.filter((i) => !tecnico || 'seccion' in i || ('tecnico' in i && i.tecnico));
 
   return (
@@ -32,13 +36,13 @@ export default function AdminLayout() {
       }} className="admin-grid">
         <aside className="card">
           <div className="card-body" style={{ padding: '0.75rem' }}>
-            <div className="admin-seccion">{tecnico ? 'Patio y taller' : 'Administración'}</div>
+            <div className="admin-seccion">{tecnico ? 'Patio y taller' : 'Panel RentaFacil'}</div>
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
               {items.map((i) => ('seccion' in i
                 ? (tecnico ? null : <div key={i.seccion} className="admin-seccion" style={{ marginTop: '0.5rem' }}>{i.seccion}</div>)
                 : (
                   <NavLink key={i.to} to={i.to} end={'end' in i ? i.end : undefined}
-                    className={({ isActive }) => isActive ? 'admin-link active' : 'admin-link'}>
+                    className={({ isActive }) => `${isActive ? 'admin-link active' : 'admin-link'}${'destacado' in i && i.destacado ? ' admin-link-destacado' : ''}`}>
                     {i.label}
                   </NavLink>
                 )))}
@@ -54,6 +58,8 @@ export default function AdminLayout() {
           color: var(--text); text-decoration: none; font-size: 0.95rem; }
         .admin-link:hover { background: var(--surface-hover); }
         .admin-link.active { background: var(--strong); color: var(--on-strong); font-weight: 600; }
+        .admin-link-destacado { font-weight: 700; border: 1px solid var(--brand-border); background: var(--brand-light); margin-bottom: 0.2rem; }
+        .admin-link-destacado.active { border-color: var(--strong); }
         @media (max-width: 800px) { .admin-grid { grid-template-columns: 1fr !important; } }
       `}</style>
     </div>

@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import { Column, CreateDateColumn, Entity, PrimaryColumn } from 'typeorm';
 
 /**
@@ -6,7 +7,7 @@ import { Column, CreateDateColumn, Entity, PrimaryColumn } from 'typeorm';
  * misma respuesta sin volver a aplicar la operacion, tambien despues de un reinicio del servidor.
  * (POST /orders/create usa la columna orders.idempotency_key, igual que en el Reto 1.)
  */
-@Entity('idempotency_records')
+@Entity({ schema: ESQUEMAS.ORDERS, name: 'idempotency_records' })
 export class IdempotencyRecord {
   @PrimaryColumn({ type: 'varchar', length: 60, name: 'idempotency_key' })
   idempotency_key: string;

@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
 /**
@@ -11,7 +12,7 @@ export type UserRole = 'client' | 'admin' | 'mechanic';
  * El email es el `sub` del token y por tanto el dueño (owner_sub) de sus órdenes.
  * La contraseña se guarda como hash scrypt con sal (formato "scrypt$<sal>$<hash>"), nunca en claro.
  */
-@Entity('users')
+@Entity({ schema: ESQUEMAS.IDENTITY, name: 'users' })
 export class User {
   @PrimaryGeneratedColumn('uuid')
   user_id: string;

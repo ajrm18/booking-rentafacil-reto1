@@ -11,10 +11,15 @@ export function corsOptions(frontendUrl?: string): CorsOptions {
     origin: [
       frontendUrl || 'http://localhost:5173',
       'https://booking.epn.edu.ec',
+      'https://booking-core-api.azurewebsites.net',
+      'https://rda1-api.onrender.com',
+      'https://rda1-backend-integracion-sistemas.onrender.com',
+      'https://booking-rentafacil-reto1.vercel.app',
       'http://localhost:3000',
       'http://localhost:4000',
       'http://localhost:5173',
       /\.vercel\.app$/,
+      /\.azurewebsites\.net$/,
     ],
     credentials: true,
     exposedHeaders: ['Cache-Control', 'X-API-Deprecation-Date', 'Retry-After', CORRELATION_HEADER],
@@ -31,7 +36,9 @@ export function configureApp(app: INestApplication): void {
 
   // Prefijo global: /api/v1 (alineado con servers.url = https://.../autos/v1). Los controladores
   // del contrato v2 declaran su ruta completa /api/v2/autos/... y quedan fuera del prefijo.
-  app.setGlobalPrefix('api/v1', { exclude: [{ path: 'api/v2/(.*)', method: RequestMethod.ALL }] });
+  app.setGlobalPrefix('api/v1', {
+    exclude: [{ path: 'api/v2/(.*)', method: RequestMethod.ALL }, { path: 'api/v3/(.*)', method: RequestMethod.ALL }, { path: 'api/v3', method: RequestMethod.ALL }],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

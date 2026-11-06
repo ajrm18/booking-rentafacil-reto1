@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import {
   Column, CreateDateColumn, Entity, PrimaryColumn,
 } from 'typeorm';
@@ -5,7 +6,7 @@ import {
 /**
  * Bloqueo temporal del vehiculo (15 minutos por defecto) creado por POST /orders/hold.
  */
-@Entity('holds')
+@Entity({ schema: ESQUEMAS.ORDERS, name: 'holds' })
 export class Hold {
   @PrimaryColumn({ type: 'varchar', length: 60 })
   hold_id: string;

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { uuidv4 } from './client';
+import { API_V2, uuidv4 } from './client';
 import type {
   AutoFlotaItemV2, AutoOrderResponseV2, AutosHealthResponseV2, CloudEventFeed, ContratoPromociones,
   CoberturaOpcion, CreateAutoOrderRequestV2, SearchAutosRequestV2, SearchAutosResponseV2,
@@ -7,10 +7,9 @@ import type {
 
 /**
  * Cliente de /api/v2 (backend/contracts/autos-openapi-v2.yaml). Por defecto se deriva de
- * VITE_API_URL cambiando /api/v1 por /api/v2, asi no hace falta otra variable en Vercel.
+ * VITE_API_URL (que puede terminar en /api/v1, /api/v2 o /api/v3), asi no hace falta otra variable en Vercel.
  */
-const v1 = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
-const baseURL = import.meta.env.VITE_API_V2_URL || v1.replace(/\/api\/v1\/?$/, '/api/v2');
+const baseURL = API_V2;
 
 export const apiV2 = axios.create({ baseURL });
 

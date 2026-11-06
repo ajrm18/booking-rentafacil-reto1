@@ -1,6 +1,18 @@
 import axios from 'axios';
 
-const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+/**
+ * VITE_API_URL puede apuntar a cualquier version (/api/v1, /api/v2 o /api/v3, p. ej.
+ * https://rentafacil-autos-api.azurewebsites.net/api/v3): de ella se derivan las tres bases.
+ */
+const AZURE = 'https://rentafacil-autos-api.azurewebsites.net';
+const configurada = (import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1').replace(/\/+$/, '').replace(/\/api\/v[123]$/, '');
+// Migracion Render -> Azure (Reto 2 final): si Vercel aun tiene la URL antigua de Render, se usa Azure
+const raiz = /rentafacil-api\.onrender\.com/.test(configurada) ? AZURE : configurada;
+export const API_ROOT = raiz;
+export const API_V1 = `${raiz}/api/v1`;
+export const API_V2 = import.meta.env.VITE_API_V2_URL || `${raiz}/api/v2`;
+export const API_V3 = import.meta.env.VITE_API_V3_URL || `${raiz}/api/v3`;
+const baseURL = API_V1;
 const affiliateId = import.meta.env.VITE_AFFILIATE_ID || '1';
 
 /** Cliente HTTP configurado con headers según contrato autos-openapi.yaml */

@@ -1,8 +1,9 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import {
   Column, CreateDateColumn, Entity, PrimaryGeneratedColumn,
 } from 'typeorm';
 
-@Entity('webhook_subscriptions')
+@Entity({ schema: ESQUEMAS.WEBHOOKS, name: 'webhook_subscriptions' })
 export class WebhookSubscription {
   @PrimaryGeneratedColumn('uuid')
   id: string;

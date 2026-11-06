@@ -3,6 +3,8 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { correlationIdDe } from '../correlation';
+import { log } from '../app-logger';
+import { traducirProblemaV3 } from '../../modules/autos-v3/v3';
 
 /** Valores permitidos de ProblemDetails.code (enum de autos-openapi.yaml). */
 const PROBLEM_CODES = new Set([
@@ -35,7 +37,9 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const res = ctx.getResponse<Response>();
     const req = ctx.getRequest<Request>();
-    const v2 = (req?.originalUrl ?? req?.url ?? '').startsWith('/api/v2');
+    const url = req?.originalUrl ?? req?.url ?? '';
+    const v3 = url.startsWith('/api/v3');
+    const v2 = url.startsWith('/api/v2') || v3;
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let body: any = {
@@ -70,13 +74,25 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       body.detail = exception.message;
     }
     // En v2 solo se respeta el code que venga explicito en un Problem Details; el resto sale del estado HTTP
-    if (v2 && !(exception instanceof HttpException && (exception.getResponse() as any)?.code)) body.code = undefined;
+    const codigoExplicito = exception instanceof HttpException && (exception.getResponse() as any)?.code;
+    if (v2 && !codigoExplicito) body.code = undefined;
+
+    let salida = v2 ? this.sanitizeV2(body, status, req) : this.sanitize(body, status);
+    if (v3) {
+      // Errores de sintaxis sin codigo propio (JSON mal formado) -> 400 MALFORMED_REQUEST
+      if (status === 400 && !codigoExplicito) salida.code = 'MALFORMED_REQUEST';
+      const t = traducirProblemaV3(salida, status);
+      status = t.status;
+      salida = t.body as any;
+    }
+    if (status >= 500) log.error('HTTP', `${req?.method} ${url} -> ${status}`, { code: salida.code, detail: String((salida as any).detail ?? '').slice(0, 160) });
+    else if (v2) log.warn('HTTP', `${req?.method} ${url} -> ${status} ${salida.code}`);
 
     if ((status === 409 || status === 429) && !res.getHeader('Retry-After')) {
       res.setHeader('Retry-After', String(status === 409 ? RETRY_AFTER_CONFLICT_S : 60));
     }
 
-    res.status(status).type('application/problem+json').json(v2 ? this.sanitizeV2(body, status, req) : this.sanitize(body, status));
+    res.status(status).type('application/problem+json').json(salida);
   }
 
   private sanitizeV2(b: any, status: number, req: Request) {

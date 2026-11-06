@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import {
   Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn,
 } from 'typeorm';
@@ -7,7 +8,7 @@ import { ColumnNumericTransformer } from '../../../common/transformers/column-nu
  * Orden de renta creada por POST /orders/create.
  * order_id es UUID (segun contrato components.schemas.OrderDetail.order_id).
  */
-@Entity('orders')
+@Entity({ schema: ESQUEMAS.ORDERS, name: 'orders' })
 export class Order {
   @PrimaryGeneratedColumn('uuid')
   order_id: string;
@@ -114,6 +115,17 @@ export class Order {
 
   @Column({ type: 'text', nullable: true, name: 'observaciones_devolucion' })
   observaciones_devolucion: string | null;
+
+  // ── Reto 2 final (/api/v3): cliente cross-platform y notificacion al Booking ─────────
+
+  /** client_id logico de db_identity.clientes (Database-per-Service: sin FK fisica entre esquemas). */
+  @Index()
+  @Column({ type: 'uuid', nullable: true, name: 'fk_cliente' })
+  fk_cliente: string | null;
+
+  /** Check-in de entrega asistido en mostrador confirmado (estado CONFIRMADO_ASISTIDO de v3.1). */
+  @Column({ type: 'varchar', length: 30, nullable: true, name: 'estado_asistido' })
+  estado_asistido: string | null;
 
   @CreateDateColumn({ name: 'creation_date' })
   creation_date: Date;

@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { Vehicle } from './vehicle.entity';
 
@@ -5,7 +6,7 @@ import { Vehicle } from './vehicle.entity';
  * Proveedor de renta (Ej: Hertz, Avis, Enterprise).
  * Mapea con components.schemas.SuppliersResponse.data.items
  */
-@Entity('suppliers')
+@Entity({ schema: ESQUEMAS.CATALOG, name: 'suppliers' })
 export class Supplier {
   @PrimaryGeneratedColumn()
   supplier_id: number;

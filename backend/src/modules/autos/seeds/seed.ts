@@ -18,6 +18,13 @@ import { hashPassword } from '../../../common/password';
 async function bootstrap() {
   const app = await NestFactory.createApplicationContext(AppModule);
   const ds = app.get(DataSource);
+  await sembrarTodo(ds);
+  await app.close();
+  process.exit(0);
+}
+
+/** Todos los pasos son idempotentes (se pueden correr en cada despliegue sin duplicar datos). */
+export async function sembrarTodo(ds: DataSource) {
 
   const depotRepo = ds.getRepository(Depot);
   const supplierRepo = ds.getRepository(Supplier);
@@ -148,6 +155,7 @@ async function bootstrap() {
     console.log('  vehicles + imágenes creados');
   }
 
+  await asegurarFlota12(ds);
   await corregirOrtografia(ds);
   await sembrarUsuarios(ds);
   await sembrarReservasHistoricas(ds);
@@ -160,8 +168,27 @@ async function bootstrap() {
   console.log('  Cliente: carlos@example.com  / Cliente12345');
   console.log('  Técnico: tecnico@rentafacil.ec / Tecnico12345 (rol MANTENIMIENTO en /api/v2)');
   console.log('Uso: POST /api/v1/auth/token para obtener JWT con scopes.');
-  await app.close();
-  process.exit(0);
+}
+
+/** Flota de 12 vehiculos del Reto 2 final: agrega VEH-1011 y VEH-1012 si faltan. */
+async function asegurarFlota12(ds: DataSource) {
+  const vehicleRepo = ds.getRepository(Vehicle);
+  const depots = await ds.getRepository(Depot).find({ order: { depot_id: 'ASC' } });
+  const suppliers = await ds.getRepository(Supplier).find({ order: { supplier_id: 'ASC' } });
+  if (!depots.length || !suppliers.length) return;
+  const extra = [
+    { vehicle_id: 'VEH-1011', make: 'Suzuki', model: 'Swift', year: 2024, plate: 'PBA-1011', color: 'Rojo',
+      seats: 5, doors: 4, bag_capacity: 2, transmission: 'manual', fuel_type: 'gasolina', car_type: 'Compacto',
+      price_per_day: 32.0, description: 'Compacto ágil y económico, ideal para la ciudad.', supplier_id: suppliers[0].supplier_id, depot_id: depots[0].depot_id },
+    { vehicle_id: 'VEH-1012', make: 'Kia', model: 'Sportage', year: 2024, plate: 'PBA-1012', color: 'Blanco',
+      seats: 5, doors: 4, bag_capacity: 4, transmission: 'automatica', fuel_type: 'gasolina', car_type: 'SUV',
+      price_per_day: 78.0, description: 'SUV familiar con amplio espacio y tecnología.', supplier_id: suppliers[Math.min(1, suppliers.length - 1)].supplier_id, depot_id: depots[Math.min(2, depots.length - 1)].depot_id },
+  ];
+  for (const d of extra) {
+    if (await vehicleRepo.exist({ where: [{ vehicle_id: d.vehicle_id }, { plate: d.plate }] })) continue;
+    await vehicleRepo.save(vehicleRepo.create({ ...d, air_conditioning: true, status: 'AVAILABLE', main_image_url: null } as any));
+    console.log(`  vehiculo ${d.vehicle_id} creado (flota de 12)`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -314,4 +341,4 @@ async function sembrarOdometros(ds: DataSource) {
   if (n) console.log(`  odómetro inicial fijado en ${n} vehículos`);
 }
 
-bootstrap().catch((e) => { console.error('Error en seed:', e); process.exit(1); });
+if (require.main === module) bootstrap().catch((e) => { console.error('Error en seed:', e); process.exit(1); });

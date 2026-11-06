@@ -11,6 +11,9 @@ import { configureApp, corsOptions } from './app.setup';
 import { AutosModule } from './modules/autos/autos.module';
 import { GRPC_PACKAGE, inventoryProtoPath, PROTO_LOADER_OPTIONS } from './modules/integracion/grpc/proto-path';
 import { grpcServidor } from './modules/integracion/grpc/grpc-estado';
+import { AppLogger, log } from './common/app-logger';
+import { DataSource } from 'typeorm';
+import { sembrarTodo } from './modules/autos/seeds/seed';
 
 /** Lee un contrato YAML de backend/contracts (cwd = backend en Render y en local). */
 function leerContrato(nombre: string): OpenAPIObject | null {
@@ -31,9 +34,60 @@ function swaggerV2(app: INestApplication): void {
   if (propio) SwaggerModule.setup('api/v2/docs-rentafacil', app, propio, { ...opciones, customSiteTitle: 'RentaFacil EC - Contrato propio v2' });
 }
 
+/**
+ * Contrato v3.0.0 oficial (sin modificar el YAML) en /api/v3/docs. Solo en memoria se agregan la
+ * URL de Azure como primer servidor y los endpoints v3.1 propios (clientes, buscador, alta de autos).
+ */
+function swaggerV3(app: INestApplication): void {
+  const doc = leerContrato('autos-openapi-v3.yaml') as any;
+  if (!doc) return;
+  const publica = process.env.PUBLIC_BASE_URL || 'https://rentafacil-autos-api.azurewebsites.net';
+  doc.servers = [{ url: `${publica}/api/v3`, description: 'RentaFacil EC en Azure App Service (brazilsouth)' }, ...(doc.servers ?? [])];
+  const ok = (d: string) => ({ description: d, content: { 'application/json': { schema: { type: 'object' } } } });
+  const tag = ['RentaFacil v3.1 - Clientes cross-platform y Mostrador'];
+  doc.tags = [...(doc.tags ?? []), { name: tag[0], description: 'Extensiones v3.1 de RentaFacil EC (evaluación): clientes anti-duplicados, buscador de mostrador y alta de vehículos.' }];
+  doc.paths = {
+    ...doc.paths,
+    '/clientes': {
+      get: {
+        tags: tag, summary: 'Buscar cliente por email O identificacion (404 o [] con X-Prefer-Empty-Array: true)',
+        parameters: [
+          { name: 'email', in: 'query', schema: { type: 'string' } },
+          { name: 'identificacion', in: 'query', schema: { type: 'string' } },
+          { name: 'X-Prefer-Empty-Array', in: 'header', schema: { type: 'string', enum: ['true'] } },
+        ],
+        responses: { 200: ok('Cliente encontrado { client_id, nombre, email, identificacion } (o [] con la cabecera)'), 404: ok('ProblemDetails CLIENT_NOT_FOUND') },
+      },
+      post: {
+        tags: tag, summary: 'Crear cliente; si email o identificacion ya existen devuelve el existente (200, nunca 409)',
+        requestBody: { content: { 'application/json': { schema: { type: 'object', required: ['nombre', 'email', 'identificacion'], properties: {
+          nombre: { type: 'string', example: 'Juan Perez' }, email: { type: 'string', example: 'juan@example.com' },
+          identificacion: { type: 'string', example: '1710034065' }, telefono: { type: 'string', example: '+593987654321' }, licencia: { type: 'string', example: '1710034065' },
+        } } } } },
+        responses: { 201: ok('{ client_id }'), 200: ok('Cliente existente'), 422: ok('INVALID_PAYLOAD') },
+      },
+    },
+    '/autos/orders/buscar': {
+      get: { tags: tag, summary: 'Buscador del mostrador (PNR, cédula de 10 dígitos o email)', security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'q', in: 'query', required: true, schema: { type: 'string' } }, { name: 'tipo', in: 'query', schema: { type: 'string', enum: ['PNR', 'IDENTIFICACION', 'EMAIL'] } }],
+        responses: { 200: ok('Tarjetas de reservas') } },
+    },
+    '/admin/vehicles': {
+      post: { tags: tag, summary: 'Crear vehículo con stock inicial (push gRPC available_units=1 al Booking)', security: [{ BearerAuth: [] }],
+        responses: { 201: ok('AutoVehiculoCardV2 + stock') } },
+    },
+  };
+  SwaggerModule.setup('api/v3/docs', app, doc, {
+    swaggerOptions: { persistAuthorization: true, docExpansion: 'none' },
+    customSiteTitle: 'RentaFacil EC - Autos API v3.0.0 (contrato oficial RDA2)',
+  });
+}
+
 /** Servidor gRPC InventoryStockService en 0.0.0.0:50051, en el mismo proceso que el HTTP. */
 async function grpc(app: INestApplication): Promise<void> {
-  if (process.env.GRPC_ENABLED === 'false') return;
+  // En Azure App Service B1 el puerto 50051 no es alcanzable desde Internet: RentaFacil actua solo
+  // como CLIENTE gRPC hacia el Booking (GRPC_ENABLED=false en Azure).
+  if (process.env.GRPC_ENABLED === 'false') { log.info('GRPC', 'servidor gRPC propio deshabilitado (modo cliente hacia el Booking)'); return; }
   const url = process.env.GRPC_URL || `0.0.0.0:${process.env.GRPC_PORT || 50051}`;
   try {
     app.connectMicroservice<MicroserviceOptions>({
@@ -51,7 +105,7 @@ async function grpc(app: INestApplication): Promise<void> {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { logger: new AppLogger() });
   const config = app.get(ConfigService);
 
   // Prefijo /api/v1, ValidationPipe y filtro Problem Details (compartido con las pruebas e2e)
@@ -137,11 +191,20 @@ async function bootstrap() {
     customSiteTitle: 'RentaFacil EC - Autos API Docs',
   });
   swaggerV2(app);
+  swaggerV3(app);
   await grpc(app);
 
-  const port = config.get<number>('PORT') || 3000;
-  await app.listen(port);
-  Logger.log(`GDS Autos API - RentaFacil EC corriendo en puerto ${port}`, 'Bootstrap');
-  Logger.log(`Swagger v1: /api/docs | Swagger v2: /api/v2/docs (JSON: /api/v2/docs-json)`, 'Bootstrap');
+  // Azure App Service inyecta PORT (8080 por defecto en Linux)
+  const port = Number(process.env.PORT || config.get<number>('PORT') || 8080);
+  await app.listen(port, '0.0.0.0');
+  log.info('BOOTSTRAP', `RentaFacil EC - Autos API v3 escuchando en 0.0.0.0:${port}`, { node_env: process.env.NODE_ENV, nodo: process.env.NODE_ID || 'NODE_AUT_RENTAFACIL' });
+  log.info('BOOTSTRAP', 'Swagger v1: /api/docs | v2: /api/v2/docs | v3: /api/v3/docs | health: /api/v3/autos/health');
+
+  // Seed idempotente en el arranque (Azure no ejecuta scripts previos): 12 autos, usuarios demo, contrato B2B
+  if (process.env.SEED_ON_START === 'true') {
+    sembrarTodo(app.get(DataSource))
+      .then(() => log.info('SEED', 'datos demo verificados (idempotente)'))
+      .catch((e) => log.warn('SEED', `no se pudo sembrar: ${e?.message}`));
+  }
 }
 bootstrap();

@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 export type EstadoPublicacion = 'PENDING' | 'PUBLISHED' | 'LOGGED' | 'FAILED';
@@ -10,7 +11,7 @@ export type EstadoPublicacion = 'PENDING' | 'PUBLISHED' | 'LOGGED' | 'FAILED';
  * Vive en el schema public: synchronize de TypeORM no crea schemas de Postgres en el arranque
  * de Render, asi que "schema_outbox" es una agrupacion logica.
  */
-@Entity('outbox_events')
+@Entity({ schema: ESQUEMAS.OUTBOX, name: 'outbox_events' })
 export class OutboxEvent {
   /** Orden total de insercion: cursor del feed (?after=). */
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })

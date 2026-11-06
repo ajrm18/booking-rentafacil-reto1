@@ -1,3 +1,4 @@
+import { ESQUEMAS } from '../../../common/schemas';
 import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { ColumnNumericTransformer } from '../../../common/transformers/column-numeric.transformer';
 import { Vehicle } from './vehicle.entity';
@@ -6,7 +7,7 @@ import { Vehicle } from './vehicle.entity';
  * Agencia de renta (punto de recogida/entrega).
  * Mapea con components.schemas.DepotsResponse.data.items
  */
-@Entity('depots')
+@Entity({ schema: ESQUEMAS.CATALOG, name: 'depots' })
 export class Depot {
   @PrimaryGeneratedColumn()
   depot_id: number;
