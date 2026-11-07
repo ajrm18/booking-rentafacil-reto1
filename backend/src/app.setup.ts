@@ -2,6 +2,7 @@ import { BadRequestException, INestApplication, RequestMethod, ValidationError, 
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { ProblemDetailsFilter } from './common/filters/http-exception.filter';
 import { CORRELATION_HEADER, correlationMiddleware } from './common/correlation';
+import { apiKeyV3Middleware } from './common/rentafacil-api-key';
 
 /**
  * Origenes del Booking Prototipo central (docs/integracion-booking.md §3.2) + frontend propio.
@@ -33,6 +34,8 @@ export function corsOptions(frontendUrl?: string): CorsOptions {
 export function configureApp(app: INestApplication): void {
   // X-Correlation-Id en todas las respuestas (trazabilidad end-to-end del Reto 2)
   app.use(correlationMiddleware);
+  // X-API-Key obligatoria en /api/v3/autos/orders*, /api/v3/autos/reservas* y /api/v3/clientes*
+  app.use(apiKeyV3Middleware);
 
   // Prefijo global: /api/v1 (alineado con servers.url = https://.../autos/v1). Los controladores
   // del contrato v2 declaran su ruta completa /api/v2/autos/... y quedan fuera del prefijo.

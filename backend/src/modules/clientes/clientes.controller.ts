@@ -3,7 +3,7 @@ import { ApiExcludeController } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { log } from '../../common/app-logger';
 import { correlationIdDe } from '../../common/correlation';
-import { ToleranteSinCredenciales, V3AuthGuard } from '../../common/guards/v3-auth.guard';
+import { V3AuthGuard } from '../../common/guards/v3-auth.guard';
 import { problema } from '../autos-v2/problema';
 import { authV2De, Roles } from '../autos-v2/v2-auth.guard';
 import { OrigenCliente } from './cliente.entity';
@@ -20,7 +20,8 @@ export function origenDe(req: Request): OrigenCliente {
 
 /**
  * Clientes cross-platform v3.1 (requerimiento de la evaluacion): GET busca por email O
- * identificacion; POST crea o devuelve el existente (nunca 409).
+ * identificacion; POST crea o devuelve el existente (nunca 409). Exige X-API-Key (o el JWT del
+ * panel web): apiKeyV3Middleware responde 401 MISSING_API_KEY antes de llegar aqui.
  */
 @ApiExcludeController()
 @Controller('api/v3/clientes')
@@ -29,12 +30,10 @@ export class ClientesController {
   constructor(private readonly clientes: ClientesService) {}
 
   @Get()
-  @ToleranteSinCredenciales()
   async buscar(
     @Query('email') email: string | undefined, @Query('identificacion') identificacion: string | undefined,
     @Headers('x-prefer-empty-array') vacio: string | undefined, @Req() req: Request,
   ) {
-    if (!req.headers['x-api-key']) log.warn('CLIENTES', 'GET /clientes sin X-API-Key (tolerado para la demo)');
     const c = await this.clientes.buscar(email, identificacion);
     const criterio = email ? `email=${normEmail(email)}` : `identificacion=${identificacion}`;
     if (!c) {
@@ -50,7 +49,6 @@ export class ClientesController {
   }
 
   @Post()
-  @ToleranteSinCredenciales()
   async crear(@Body() body: any, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const { cliente, creado } = await this.clientes.upsert(body ?? {}, origenDe(req));
     if (creado) {

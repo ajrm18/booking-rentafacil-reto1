@@ -12,6 +12,17 @@ import {
   resolverCiudad, transmisionInterna,
 } from './reglas';
 import { aVehiculoCard } from './v2.mapper';
+import { bloqueaRango, ordenCruzaRango, rangoDeOrden } from '../autos-v3/v3';
+
+/**
+ * porRango (solo /api/v3, Ajuste 2): el vehiculo se bloquea por rango de fechas que se cruzan con
+ * una orden CONFIRMED/ENTREGADO, no por su estado global. /api/v1 y /api/v2 no lo usan.
+ */
+export interface OpcionesCatalogo { porRango?: boolean }
+
+/** Estados en los que el vehiculo existe en el catalogo v3 (RESERVADO es por rango, no global). */
+const PUBLICABLES = ['AVAILABLE', 'RESERVED', 'READY_FOR_PICKUP', 'DELIVERED'];
+const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
 const CATEGORIAS = ['ALL', 'ECONOMICO', 'COMPACTO', 'SUV', 'PREMIUM', 'VAN'];
 const TRANSMISIONES = ['ALL', 'MANUAL', 'AUTOMATICO'];
@@ -27,17 +38,17 @@ export class CatalogoV2Service {
   ) {}
 
   /** GET /autos: solo vehiculos DISPONIBLE (excluye RESERVADO, ENTREGADO, EN_MANTENIMIENTO y EN_LIMPIEZA). */
-  async listar(q: { category?: string; transmission?: string; limit?: string }) {
+  async listar(q: { category?: string; transmission?: string; limit?: string }, opciones: OpcionesCatalogo = {}) {
     const limit = this.limite(q.limit, 10);
     await this.inventario.liberarCooldownsVencidos();
-    const qb = this.disponibles();
+    const qb = opciones.porRango ? this.publicables() : this.disponibles();
     this.filtros(qb, q.category, q.transmission);
     const [vehiculos, total] = await qb.take(limit).getManyAndCount();
     return { total, limit, data: vehiculos.map((v) => aVehiculoCard(v)) };
   }
 
   /** POST /autos/search con franjas de 30 min, control etario y exclusion por cooldown. */
-  async buscar(body: any) {
+  async buscar(body: any, opciones: OpcionesCatalogo = {}) {
     if (!body || typeof body !== 'object') throw invalido([{ name: 'body', reason: 'Se esperaba un objeto JSON' }]);
     const faltantes = ['pickup_location', 'pickup_date', 'pickup_time', 'dropoff_date', 'dropoff_time']
       .filter((k) => body[k] === undefined || body[k] === null || body[k] === '');
@@ -48,7 +59,7 @@ export class CatalogoV2Service {
     if (body.transmission && !TRANSMISIONES.includes(String(body.transmission))) throw invalido([{ name: 'transmission', reason: `Debe ser uno de ${TRANSMISIONES.join(', ')}` }]);
 
     await this.inventario.liberarCooldownsVencidos();
-    const qb = this.disponibles();
+    const qb = opciones.porRango ? this.publicables(periodo.pickup) : this.disponibles();
     this.filtros(qb, body.category, body.transmission);
     const ciudades = (await this.depots.createQueryBuilder('d').select('DISTINCT d.city', 'city').where('d.active = true').getRawMany())
       .map((r) => r.city as string);
@@ -57,7 +68,9 @@ export class CatalogoV2Service {
     else if (ciudad) qb.andWhere('LOWER(d.city) = LOWER(:ciudad)', { ciudad });
 
     const vehiculos = await qb.take(500).getMany();
-    const ocupados = await this.ocupados();
+    const ocupados = opciones.porRango
+      ? await this.ocupadosEnRango(periodo.pickup_date, periodo.dropoff_date)
+      : await this.ocupados();
     const data = vehiculos.filter((v) => !ocupados.has(v.vehicle_id)).map((v) => {
       const p = calcularPrecio(Number(v.price_per_day), periodo.dias, 'BASICA', edad);
       return aVehiculoCard(v, p.total);
@@ -141,6 +154,68 @@ export class CatalogoV2Service {
     return new Set(activas
       .filter((o) => { const fin = Date.parse(o.route_details?.dropoff?.datetime); return isNaN(fin) || fin >= ahora; })
       .map((o) => o.vehicle_id));
+  }
+
+  /**
+   * Vehiculos del catalogo v3: todo lo que no esta en mantenimiento ni en limpieza. Con `desde`
+   * (busqueda con fechas), un auto en limpieza cuyo cooldown termina antes de la recogida tambien entra.
+   */
+  private publicables(desde?: Date): SelectQueryBuilder<Vehicle> {
+    const qb = this.vehicles.createQueryBuilder('v')
+      .leftJoinAndSelect('v.depot', 'd')
+      .leftJoinAndSelect('v.supplier', 's')
+      .leftJoinAndSelect('v.images', 'i')
+      .orderBy('v.price_per_day', 'ASC').addOrderBy('v.vehicle_id', 'ASC');
+    if (desde) {
+      qb.where("(v.status IN (:...pub) OR (v.status = 'WASHING' AND v.wash_until IS NOT NULL AND v.wash_until <= :desde))", { pub: PUBLICABLES, desde });
+    } else {
+      qb.where('v.status IN (:...pub)', { pub: PUBLICABLES });
+    }
+    return qb;
+  }
+
+  /** Ordenes activas (CONFIRMED sin devolver), opcionalmente de un solo vehiculo. */
+  private async activas(vehicleId?: string): Promise<Order[]> {
+    return this.orders.find({
+      where: { status: 'CONFIRMED', returned_at: IsNull(), checkin_devolucion_at: IsNull(), ...(vehicleId && { vehicle_id: vehicleId }) },
+      select: { order_id: true, vehicle_id: true, status: true, route_details: true, returned_at: true, checkin_devolucion_at: true },
+    });
+  }
+
+  /** Vehiculos con una orden activa cuyo rango [pickup, dropoff] se cruza con [desde, hasta]. */
+  async ocupadosEnRango(desde: string, hasta: string): Promise<Set<string>> {
+    const activas = await this.activas();
+    return new Set(activas.filter((o) => ordenCruzaRango(o, desde, hasta)).map((o) => o.vehicle_id));
+  }
+
+  /** GET /api/v3/autos/{id}/disponibilidad?pickup_date=YYYY-MM-DD&dropoff_date=YYYY-MM-DD */
+  async disponibilidad(id: string, pickupDate?: string, dropoffDate?: string) {
+    const errores: { name: string; reason: string }[] = [];
+    if (!pickupDate || !FECHA.test(pickupDate) || isNaN(Date.parse(pickupDate))) errores.push({ name: 'pickup_date', reason: 'Fecha obligatoria con formato YYYY-MM-DD' });
+    if (!dropoffDate || !FECHA.test(dropoffDate) || isNaN(Date.parse(dropoffDate))) errores.push({ name: 'dropoff_date', reason: 'Fecha obligatoria con formato YYYY-MM-DD' });
+    if (!errores.length && dropoffDate! < pickupDate!) errores.push({ name: 'dropoff_date', reason: 'Debe ser igual o posterior a pickup_date' });
+    if (errores.length) throw invalido(errores);
+    await this.inventario.liberarCooldownsVencidos();
+    const v = await this.vehiculo(id);
+    const activas = (await this.activas(v.vehicle_id)).filter(bloqueaRango);
+    const rangos = activas.map((o) => ({ ...rangoDeOrden(o), cruza: ordenCruzaRango(o, pickupDate!, dropoffDate!) }))
+      .sort((a, b) => String(a.pickup_date).localeCompare(String(b.pickup_date)));
+    const cruza = rangos.some((r) => r.cruza);
+    const limpiezaHasta = v.status === 'WASHING' && v.wash_until ? new Date(v.wash_until) : null;
+    const enLimpieza = !!limpiezaHasta && limpiezaHasta.toISOString().slice(0, 10) >= pickupDate!;
+    const estado = v.status === 'MAINTENANCE' ? 'EN_MANTENIMIENTO' : enLimpieza ? 'EN_LIMPIEZA' : cruza ? 'RESERVADO' : 'DISPONIBLE';
+    const disponible = estado === 'DISPONIBLE';
+    return {
+      vehicle_id: v.vehicle_id,
+      pickup_date: pickupDate,
+      dropoff_date: dropoffDate,
+      disponible,
+      estado,
+      status: estado,
+      available_units: disponible ? 1 : 0,
+      regla: 'Rangos [a1,a2] y [b1,b2] se cruzan cuando a1 <= b2 AND b1 <= a2 (ordenes CONFIRMED o ENTREGADO)',
+      rangos_reservados: rangos,
+    };
   }
 
   private limite(valor: string | undefined, porDefecto: number): number {

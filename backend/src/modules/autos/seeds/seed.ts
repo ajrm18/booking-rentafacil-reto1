@@ -186,10 +186,24 @@ async function asegurarFlota12(ds: DataSource) {
   ];
   for (const d of extra) {
     if (await vehicleRepo.exist({ where: [{ vehicle_id: d.vehicle_id }, { plate: d.plate }] })) continue;
-    await vehicleRepo.save(vehicleRepo.create({ ...d, air_conditioning: true, status: 'AVAILABLE', main_image_url: null } as any));
+    await vehicleRepo.save(vehicleRepo.create({ ...d, air_conditioning: true, status: 'AVAILABLE', main_image_url: FOTOS_FLOTA_12[d.vehicle_id] ?? null } as any));
     console.log(`  vehiculo ${d.vehicle_id} creado (flota de 12)`);
   }
+  // Idempotente: completa la foto de VEH-1011 / VEH-1012 si quedaron sin foto_url (BD de produccion)
+  for (const [id, url] of Object.entries(FOTOS_FLOTA_12)) {
+    const r = await ds.createQueryBuilder().update(Vehicle).set({ main_image_url: url })
+      .where("vehicle_id = :id AND (main_image_url IS NULL OR main_image_url = '')", { id }).execute();
+    if (r.affected) console.log(`  foto_url de ${id} cargada`);
+  }
 }
+
+/** Fotos de Wikimedia Commons (CC BY-SA) para los autos agregados en la flota de 12. */
+export const FOTOS_FLOTA_12: Record<string, string> = {
+  // File:Suzuki Swift (2024) hybrid DSC 6076.jpg
+  'VEH-1011': 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Suzuki_Swift_%282024%29_hybrid_DSC_6076.jpg/1280px-Suzuki_Swift_%282024%29_hybrid_DSC_6076.jpg',
+  // File:2023 Kia Sportage (NQ5) in White, front left.jpg
+  'VEH-1012': 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/2023_Kia_Sportage_%28NQ5%29_in_White%2C_front_left.jpg/1280px-2023_Kia_Sportage_%28NQ5%29_in_White%2C_front_left.jpg',
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pasos idempotentes: se ejecutan en cada arranque (start:render) sin duplicar datos.

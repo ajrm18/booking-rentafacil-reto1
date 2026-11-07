@@ -25,3 +25,21 @@ export class IdempotencyV2Guard implements CanActivate {
 }
 
 export const idempotencyKeyDe = (req: Request) => String(req.headers['idempotency-key']).trim().toLowerCase();
+
+/**
+ * Variante de /api/v3 para POST /autos/orders/{pnr}/cancel (Ajuste 1): la cabecera es OPCIONAL.
+ * Si viene debe ser un UUID v4 (400 si no); si falta, el servicio deduplica por pnr + fecha.
+ */
+@Injectable()
+export class IdempotencyOpcionalGuard implements CanActivate {
+  private readonly estricto = new IdempotencyV2Guard();
+
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest<Request>();
+    if (!String(req.headers['idempotency-key'] ?? '').trim()) return true;
+    return this.estricto.canActivate(ctx);
+  }
+}
+
+/** Idempotency-Key de la cabecera o '' si no vino (solo con IdempotencyOpcionalGuard). */
+export const idempotencyKeyOpcionalDe = (req: Request) => String(req.headers['idempotency-key'] ?? '').trim().toLowerCase();

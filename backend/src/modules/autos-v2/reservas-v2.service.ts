@@ -12,7 +12,8 @@ import { EVENTOS } from '../integracion/nodo';
 import { log } from '../../common/app-logger';
 import { AuthV2, veTodo } from './v2-auth.guard';
 import { invalido, ParametroInvalido, problema } from './problema';
-import { assertReservable, calcularPrecio, evaluarEdad, FRANJA_30_MIN, normalizarCobertura, parsearPeriodo } from './reglas';
+import { assertReservable, calcularPrecio, enCooldown, evaluarEdad, FRANJA_30_MIN, normalizarCobertura, parsearPeriodo } from './reglas';
+import { ordenCruzaRango, rangoDeOrden } from '../autos-v3/v3';
 import { aCooldown, aOrdenV2, estadoOrdenV2, reservaVencida, voucherCheckin } from './v2.mapper';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -29,6 +30,23 @@ interface Ctx { auth: AuthV2; idempotencyKey: string; correlationId: string }
 /** Opciones de /api/v3: upsert del cliente cross-platform antes de crear la orden. */
 export interface OpcionesCrear {
   resolverCliente?: (conductor: Record<string, any>) => Promise<string | null>;
+  /**
+   * /api/v3 (Ajuste 2): bloqueo por rango de fechas. El vehiculo NO pasa a RESERVADO globalmente;
+   * solo se rechaza (409) si el rango se cruza con otra orden CONFIRMED/ENTREGADO.
+   */
+  porRango?: boolean;
+}
+
+export interface OpcionesRango { porRango?: boolean }
+
+/** Estados desde los que un auto puede reservarse por rango (RESERVADO/ENTREGADO son por fechas). */
+const RESERVABLES_POR_RANGO = ['AVAILABLE', 'RESERVED', 'READY_FOR_PICKUP', 'DELIVERED'];
+
+/** 409 solo si el auto esta en mantenimiento o su limpieza termina despues de la recogida. */
+export function assertReservablePorRango(v: Pick<Vehicle, 'vehicle_id' | 'status' | 'wash_until'>, pickup: Date): void {
+  if (RESERVABLES_POR_RANGO.includes(v.status)) return;
+  if (v.status === 'WASHING' && !enCooldown(v, pickup)) return;
+  assertReservable(v);
 }
 
 /** Reservas (Saga hold -> create -> cancel) y triple check-in de /api/v2 (HU-AUT-06). */
@@ -115,7 +133,9 @@ export class ReservasV2Service {
     await this.inventario.liberarCooldownsVencidos(ctx.correlationId);
     const v = await this.vehicles.findOne({ where: { vehicle_id: vehicleId } });
     if (!v) throw problema(404, 'VEHICLE_NOT_FOUND', `No existe el vehículo ${vehicleId} en la flota.`, { title: 'Vehículo no encontrado' });
-    assertReservable(v);
+    const porRango = !!opciones.porRango;
+    if (porRango) assertReservablePorRango(v, periodo.pickup);
+    else assertReservable(v);
 
     const desglose = calcularPrecio(Number(v.price_per_day), periodo.dias, cobertura, edad);
     const lugarRecogida = texto(b.pickup_location ?? b.lugar_recogida) || null;
@@ -127,13 +147,23 @@ export class ReservasV2Service {
     let guardada: Order;
     try {
       guardada = await this.ds.transaction(async (m) => {
-        // DISPONIBLE -> RESERVADO condicionado: dos reservas simultaneas no se llevan el mismo auto
-        const r = await m.createQueryBuilder().update(Vehicle).set({ status: 'RESERVED', wash_until: null })
-          .where("vehicle_id = :id AND status = 'AVAILABLE'", { id: v.vehicle_id }).execute();
-        if (!r.affected) {
-          assertReservable(await m.findOneByOrFail(Vehicle, { vehicle_id: v.vehicle_id }));
-          throw problema(409, 'VEHICLE_NOT_AVAILABLE', `El vehículo ${v.vehicle_id} acaba de ser reservado.`, { title: 'Vehículo no disponible' });
+        if (porRango) {
+          // v3: bloqueo de fila (SELECT ... FOR UPDATE) para serializar reservas del mismo auto
+          const actual = await m.createQueryBuilder(Vehicle, 'v').setLock('pessimistic_write')
+            .where('v.vehicle_id = :id', { id: v.vehicle_id }).getOne();
+          if (!actual) throw problema(404, 'VEHICLE_NOT_FOUND', `No existe el vehículo ${v.vehicle_id} en la flota.`, { title: 'Vehículo no encontrado' });
+          assertReservablePorRango(actual, periodo.pickup);
+        } else {
+          // DISPONIBLE -> RESERVADO condicionado: dos reservas simultaneas no se llevan el mismo auto
+          const r = await m.createQueryBuilder().update(Vehicle).set({ status: 'RESERVED', wash_until: null })
+            .where("vehicle_id = :id AND status = 'AVAILABLE'", { id: v.vehicle_id }).execute();
+          if (!r.affected) {
+            assertReservable(await m.findOneByOrFail(Vehicle, { vehicle_id: v.vehicle_id }));
+            throw problema(409, 'VEHICLE_NOT_AVAILABLE', `El vehículo ${v.vehicle_id} acaba de ser reservado.`, { title: 'Vehículo no disponible' });
+          }
         }
+        // Ninguna otra orden activa del mismo auto puede cruzarse con este rango
+        await this.assertSinCruce(m, v.vehicle_id, periodo.pickup_date, periodo.dropoff_date);
         const o = await m.save(m.create(Order, {
           locator: await this.nuevoPnr(m),
           status: 'CONFIRMED',
@@ -159,8 +189,10 @@ export class ReservasV2Service {
         }));
         await this.outbox.registrar(m, EVENTOS.ORDEN_CONFIRMADA, {
           order_id: o.order_id, pnr: o.locator, auto_id: v.vehicle_id, total_price: desglose.total,
-          tipo_cobertura: cobertura, nuevo_estado_auto: 'RESERVADO', client_id: fkCliente,
+          tipo_cobertura: cobertura, nuevo_estado_auto: porRango ? aEstadoV2(v.status) : 'RESERVADO', client_id: fkCliente,
+          ...(porRango && { bloqueo_por_rango: { pickup_date: periodo.pickup_date, dropoff_date: periodo.dropoff_date } }),
         }, { subject: o.order_id, correlationId: ctx.correlationId });
+        // stock.actualizado es por fecha/franja (la de recogida): compatible con el bloqueo por rango
         await this.inventario.registrarCambio(m, { vehicle_id: v.vehicle_id, status: 'RESERVED' }, 'order.confirmed', ctx.correlationId, periodo.pickup);
         return o;
       });
@@ -172,9 +204,25 @@ export class ReservasV2Service {
       }
       throw e;
     }
+    // PushStockUpdate con date = dia de recogida (el estado global del auto no cambia si es por rango)
     this.inventario.notificarStock({ vehicle_id: v.vehicle_id, status: 'RESERVED' }, periodo.pickup);
-    log.info('RESERVAS', `POST /orders/create vehicle_id=${v.vehicle_id} -> PNR=${guardada.locator} | 201`, { client_id: fkCliente, total: desglose.total });
-    return aOrdenV2(guardada, { ...v, status: 'RESERVED' } as Vehicle);
+    log.info('RESERVAS', `POST /orders/create vehicle_id=${v.vehicle_id} -> PNR=${guardada.locator} | 201`,
+      { client_id: fkCliente, total: desglose.total, ...(porRango && { rango: `${periodo.pickup_date}..${periodo.dropoff_date}` }) });
+    return aOrdenV2(guardada, porRango ? v : ({ ...v, status: 'RESERVED' } as Vehicle));
+  }
+
+  /** 409 VEHICLE_NOT_AVAILABLE si otra orden activa del auto se cruza con [desde, hasta]. */
+  private async assertSinCruce(m: EntityManager, vehicleId: string, desde: string, hasta: string): Promise<void> {
+    const activas = await m.find(Order, {
+      where: { vehicle_id: vehicleId, status: 'CONFIRMED', returned_at: IsNull(), checkin_devolucion_at: IsNull() },
+    });
+    const choque = activas.find((o) => ordenCruzaRango(o, desde, hasta));
+    if (choque) {
+      const r = rangoDeOrden(choque);
+      throw problema(409, 'VEHICLE_NOT_AVAILABLE',
+        `El vehículo ${vehicleId} ya está reservado del ${r.pickup_date} al ${r.dropoff_date}; el rango ${desde}..${hasta} se cruza con esa reserva.`,
+        { title: 'Vehículo no disponible' });
+    }
   }
 
   private async repetida(o: Order, vehicleId: string) {
@@ -190,7 +238,7 @@ export class ReservasV2Service {
   //  POST /autos/orders/{orderId}/cancel — compensacion Saga con reembolso 100 %
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async cancelar(ref: string, body: any, ctx: Ctx) {
+  async cancelar(ref: string, body: any, ctx: Ctx, opciones: OpcionesRango = {}) {
     const o = await this.buscarOrden(ref, ctx.auth);
     const solicitante = texto(body?.solicitante).toUpperCase() || (ctx.auth.rol === 'CLIENTE' ? 'CLIENTE' : ctx.auth.rol === 'B2B' ? 'SAGA_ORCHESTRATOR' : 'ADMIN');
     if (!['CLIENTE', 'SAGA_ORCHESTRATOR', 'ADMIN'].includes(solicitante)) {
@@ -214,17 +262,26 @@ export class ReservasV2Service {
       }
       const refundId = `REF-AUTO-${randomBytes(3).toString('hex').toUpperCase()}`;
       let restituido: Vehicle | null = null;
+      // Por rango (v3) se libera el rango reservado: el stock de su dia de recogida vuelve a 1
+      const fechaRecogida = new Date(actual.route_details?.pickup?.datetime ?? Date.now());
+      const cuandoStock = opciones.porRango && !isNaN(fechaRecogida.getTime()) ? fechaRecogida : undefined;
       await this.ds.transaction(async (m) => {
         const r = await m.update(Order, { order_id: actual.order_id, status: 'CONFIRMED' }, {
           status: 'CANCELLED', refund_id: refundId, cancelled_at: new Date(), motivo_cancelacion: motivo,
         });
         if (!r.affected) throw problema(409, 'ORDER_ALREADY_CANCELLED', `La orden ${actual.locator} ya no está confirmada.`);
+        // Por rango (v3): si otra orden activa sin entregar sigue reteniendo el auto, no se libera
+        const otras = opciones.porRango
+          ? await m.count(Order, { where: { vehicle_id: actual.vehicle_id, status: 'CONFIRMED', checkin_entrega_at: IsNull(), returned_at: IsNull() } })
+          : 0;
         // Compensacion LIFO: el auto vuelve a DISPONIBLE si seguia retenido por esta reserva
-        const rv = await m.createQueryBuilder().update(Vehicle).set({ status: 'AVAILABLE' })
+        const rv = otras > 0 ? { affected: 0 } : await m.createQueryBuilder().update(Vehicle).set({ status: 'AVAILABLE' })
           .where("vehicle_id = :id AND status IN ('RESERVED', 'READY_FOR_PICKUP')", { id: actual.vehicle_id }).execute();
         if (rv.affected) {
           restituido = await m.findOneBy(Vehicle, { vehicle_id: actual.vehicle_id });
-          await this.inventario.registrarCambio(m, { vehicle_id: actual.vehicle_id, status: 'AVAILABLE' }, 'order.cancelled', ctx.correlationId);
+          await this.inventario.registrarCambio(m, { vehicle_id: actual.vehicle_id, status: 'AVAILABLE' }, 'order.cancelled', ctx.correlationId, cuandoStock);
+        } else if (opciones.porRango) {
+          await this.inventario.registrarCambio(m, { vehicle_id: actual.vehicle_id, status: 'AVAILABLE' }, 'order.cancelled', ctx.correlationId, cuandoStock);
         }
         await this.outbox.registrar(m, EVENTOS.ORDEN_CANCELADA, {
           order_id: actual.order_id, pnr: actual.locator, auto_id: actual.vehicle_id, refund_id: refundId,
@@ -232,8 +289,8 @@ export class ReservasV2Service {
           solicitante, motivo,
         }, { subject: actual.order_id, correlationId: ctx.correlationId });
       });
-      if (restituido) this.inventario.notificarStock({ vehicle_id: actual.vehicle_id, status: 'AVAILABLE' });
-      const estadoAuto = (restituido as Vehicle | null)?.status;
+      if (restituido || opciones.porRango) this.inventario.notificarStock({ vehicle_id: actual.vehicle_id, status: 'AVAILABLE' }, cuandoStock);
+      const estadoAuto = (restituido as Vehicle | null)?.status ?? (opciones.porRango ? 'AVAILABLE' : undefined);
       return {
         order_id: actual.order_id,
         pnr: actual.locator,
@@ -310,7 +367,7 @@ export class ReservasV2Service {
   //  Check-in 2: entrega en mostrador (agente) -> ENTREGADO, km_salida
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async checkinEntrega(ref: string, body: any, ctx: Ctx) {
+  async checkinEntrega(ref: string, body: any, ctx: Ctx, opciones: OpcionesRango = {}) {
     const o = await this.buscarOrden(ref, ctx.auth);
     const licencia = texto(body?.licencia_conducir);
     const km = entero(body?.km_salida);
@@ -330,7 +387,9 @@ export class ReservasV2Service {
           { title: 'Licencia no coincide', invalid_params: [{ name: 'licencia_conducir', reason: 'No coincide con la licencia de la reserva' }] });
       }
       const v = await this.vehicles.findOneByOrFail({ vehicle_id: actual.vehicle_id });
-      if (!['RESERVED', 'READY_FOR_PICKUP'].includes(v.status)) {
+      // Por rango (v3) el auto de la reserva puede seguir DISPONIBLE en su estado global
+      const listos = opciones.porRango ? ['AVAILABLE', 'RESERVED', 'READY_FOR_PICKUP'] : ['RESERVED', 'READY_FOR_PICKUP'];
+      if (!listos.includes(v.status)) {
         throw problema(409, 'VEHICLE_NOT_READY', `El vehículo ${v.vehicle_id} no está reservado para esta orden (estado ${aEstadoV2(v.status)}).`);
       }
       if (km < (v.kilometraje_actual ?? 0)) {

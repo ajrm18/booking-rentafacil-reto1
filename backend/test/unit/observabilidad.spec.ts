@@ -88,24 +88,25 @@ describe('X-API-Key y tolerancia del contrato v3', () => {
     expect(claveConfigurada(' abc ')).toBe('abc');
   });
 
-  it('X-API-Key valida (BOOKING_API_KEY o API_KEY_INTERNAL) -> B2B; invalida -> 401', () => {
-    process.env.BOOKING_API_KEY = 'k-booking';
+  it('X-API-Key valida (RENTAFACIL_API_KEY o API_KEY_INTERNAL) -> B2B; invalida -> 401 MISSING_API_KEY', () => {
     process.env.API_KEY_INTERNAL = 'k-interna';
-    expect(autenticar({ 'x-api-key': 'k-booking' }).rol).toBe('B2B');
+    expect(autenticar({ 'x-api-key': process.env.RENTAFACIL_API_KEY! }).rol).toBe('B2B');
     expect(autenticar({ 'x-api-key': 'k-interna' }).rol).toBe('B2B');
     expect(() => autenticar({ 'x-api-key': 'otra' })).toThrow();
   });
 
-  it('con la clave del profesor pendiente acepta la X-API-Key que envie el Booking', () => {
+  it('BOOKING_API_KEY (la que RentaFacil usa para llamar AL Booking) ya no se acepta como credencial entrante', () => {
+    process.env.BOOKING_API_KEY = 'k-booking';
+    expect(() => autenticar({ 'x-api-key': 'k-booking' })).toThrow();
     process.env.BOOKING_API_KEY = 'PENDIENTE_ME_LA_DARA_EL_PROFESOR';
-    expect(autenticar({ 'x-api-key': 'lo-que-sea' }).rol).toBe('B2B');
+    expect(() => autenticar({ 'x-api-key': 'lo-que-sea' })).toThrow();
   });
 
-  it('sin credenciales: 401 salvo en endpoints tolerantes (B2B con WARN)', () => {
+  it('sin credenciales: 401 salvo en endpoints publicos tolerantes (B2B, se loguea)', () => {
     expect(() => autenticar({})).toThrow();
     captura(true);
     expect(autenticar({}, true).rol).toBe('B2B');
-    expect(lineasCapturadas().some((l) => l.includes('[WARN] [AUTH]'))).toBe(true);
+    expect(lineasCapturadas().some((l) => l.includes('[AUTH]'))).toBe(true);
     captura(false);
   });
 

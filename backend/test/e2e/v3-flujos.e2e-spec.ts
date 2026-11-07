@@ -43,6 +43,8 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
   let orderId: string;
 
   const admin = () => ({ Authorization: `Bearer ${t.adminToken}` });
+  /** X-API-Key con la que el Booking Central llama a /api/v3 (RENTAFACIL_API_KEY, Ajuste 4). */
+  const booking = () => ({ 'X-API-Key': process.env.RENTAFACIL_API_KEY! });
   const pedido = (vid: string, extra: Record<string, any> = {}) => ({
     vehicle_id: vid, pickup_date: fechaEc(2), dropoff_date: fechaEc(5), pickup_time: '10:00', dropoff_time: '10:00',
     pickup_location: 'Aeropuerto Mariscal Sucre (UIO), Quito', coverage_type: 'BASIC',
@@ -147,7 +149,7 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
 
   describe('FLUJO 2: cliente del Booking sin duplicados -> reserva -> buscador -> check-in -> notificacion', () => {
     it('POST /api/v3/clientes crea -> 201 { client_id } con origen BOOKING', async () => {
-      const r = await http.post('/api/v3/clientes').set('X-Correlation-Id', correlation)
+      const r = await http.post('/api/v3/clientes').set(booking()).set('X-Correlation-Id', correlation)
         .send({ nombre: 'Juan Perez', email, identificacion: cedula, telefono: '+593987654321', licencia: cedula });
       expect(r.status).toBe(201);
       expect(Object.keys(r.body)).toEqual(['client_id']);
@@ -157,10 +159,10 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
     });
 
     it('POST con el mismo email (o la misma cedula) devuelve el EXISTENTE con 200, sin duplicar', async () => {
-      const mismoEmail = await http.post('/api/v3/clientes').send({ nombre: 'Juan P.', email: email.toUpperCase(), identificacion: '0999999999' });
+      const mismoEmail = await http.post('/api/v3/clientes').set(booking()).send({ nombre: 'Juan P.', email: email.toUpperCase(), identificacion: '0999999999' });
       expect(mismoEmail.status).toBe(200);
       expect(mismoEmail.body).toEqual({ client_id: clientId, nombre: 'Juan Perez', email, identificacion: cedula });
-      const mismaCedula = await http.post('/api/v3/clientes').send({ nombre: 'Otro', email: `otro.${cedula}@example.com`, identificacion: cedula });
+      const mismaCedula = await http.post('/api/v3/clientes').set(booking()).send({ nombre: 'Otro', email: `otro.${cedula}@example.com`, identificacion: cedula });
       expect(mismaCedula.status).toBe(200);
       expect(mismaCedula.body.client_id).toBe(clientId);
       const [{ n }] = await t.ds.query('SELECT COUNT(*)::int AS n FROM db_identity.clientes WHERE email = $1 OR identificacion = $2', [email, cedula]);
@@ -168,29 +170,29 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
     });
 
     it('GET /api/v3/clientes?email|identificacion -> 200; inexistente -> 404 o [] con X-Prefer-Empty-Array', async () => {
-      const porEmail = await http.get('/api/v3/clientes').query({ email });
+      const porEmail = await http.get('/api/v3/clientes').set(booking()).query({ email });
       expect(porEmail.status).toBe(200);
       expect(porEmail.body).toEqual({ client_id: clientId, nombre: 'Juan Perez', email, identificacion: cedula });
-      expect((await http.get('/api/v3/clientes').query({ identificacion: cedula })).body.client_id).toBe(clientId);
-      const no = await http.get('/api/v3/clientes').query({ email: 'nadie.nunca@example.com' });
+      expect((await http.get('/api/v3/clientes').set(booking()).query({ identificacion: cedula })).body.client_id).toBe(clientId);
+      const no = await http.get('/api/v3/clientes').set(booking()).query({ email: 'nadie.nunca@example.com' });
       expect(no.status).toBe(404);
       expect(no.body.code).toBe('CLIENT_NOT_FOUND');
-      const vacio = await http.get('/api/v3/clientes').query({ email: 'nadie.nunca@example.com' }).set('X-Prefer-Empty-Array', 'true');
+      const vacio = await http.get('/api/v3/clientes').set(booking()).query({ email: 'nadie.nunca@example.com' }).set('X-Prefer-Empty-Array', 'true');
       expect(vacio.status).toBe(200);
       expect(vacio.body).toEqual([]);
-      const sinParametros = await http.get('/api/v3/clientes');
+      const sinParametros = await http.get('/api/v3/clientes').set(booking());
       expect(sinParametros.status).toBe(422);
     });
 
     it('POST /api/v3/clientes con email invalido -> 422 INVALID_PAYLOAD', async () => {
-      const r = await http.post('/api/v3/clientes').send({ nombre: 'X Y', email: 'malo', identificacion: '' });
+      const r = await http.post('/api/v3/clientes').set(booking()).send({ nombre: 'X Y', email: 'malo', identificacion: '' });
       expect(r.status).toBe(422);
       expect(r.body.code).toBe('INVALID_PAYLOAD');
     });
 
     it('el Booking reserva con driver en ingles -> 201, la orden queda vinculada al client_id (sin duplicar el cliente)', async () => {
-      const r = await http.post('/api/v3/autos/orders/create')
-        .set({ 'Idempotency-Key': randomUUID(), 'X-Correlation-Id': correlation, 'X-API-Key': 'clave-que-envia-el-booking' })
+      const r = await http.post('/api/v3/autos/orders/create').set(booking())
+        .set({ 'Idempotency-Key': randomUUID(), 'X-Correlation-Id': correlation, 'X-API-Key': process.env.RENTAFACIL_API_KEY! })
         .send(pedido(vehicleId));
       expect(r.status).toBe(201);
       expect(r.body).toMatchObject({ status: 'CONFIRMED', auto_id: vehicleId, vehicle_id: vehicleId, client_id: clientId, tipo_cobertura: 'BASICA' });
@@ -202,11 +204,15 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
       expect(o.fk_cliente).toBe(clientId);
     });
 
-    it('FLUJO 1 (cont.): el auto pasa a RESERVADO, stock 0 en v3 y v2, y salio PushStockUpdate available=0', async () => {
+    it('FLUJO 1 (cont.): bloqueo por rango -> catalogo DISPONIBLE, el rango reservado RESERVADO y PushStockUpdate available=0 del dia', async () => {
+      // Ajuste 2: el estado global del auto no cambia; RESERVADO aplica solo dentro del rango
       const v = await t.ds.getRepository(Vehicle).findOneByOrFail({ vehicle_id: vehicleId });
-      expect(v.status).toBe('RESERVED');
-      expect((await http.get(`/api/v3/autos/${vehicleId}`)).body).toMatchObject({ estado: 'RESERVADO', stock: 0, available_units: 0 });
-      expect((await http.get(`/api/v2/autos/${vehicleId}`)).body.estado).toBe('RESERVADO');
+      expect(v.status).toBe('AVAILABLE');
+      expect((await http.get(`/api/v3/autos/${vehicleId}`)).body).toMatchObject({ estado: 'DISPONIBLE', stock: 1, available_units: 1 });
+      const ocupado = await http.get(`/api/v3/autos/${vehicleId}/disponibilidad`).query({ pickup_date: fechaEc(3), dropoff_date: fechaEc(4) });
+      expect(ocupado.body).toMatchObject({ disponible: false, estado: 'RESERVADO', available_units: 0 });
+      const libre = await http.get(`/api/v3/autos/${vehicleId}/disponibilidad`).query({ pickup_date: fechaEc(20), dropoff_date: fechaEc(22) });
+      expect(libre.body).toMatchObject({ disponible: true, estado: 'DISPONIBLE', available_units: 1 });
       await esperar(() => pushes.some((p) => p.item_id === vehicleId && p.available_units === 0));
       expect(pushes.filter((p) => p.item_id === vehicleId).map((p) => p.available_units)).toEqual([1, 0]);
       const logs = await t.ds.query("SELECT canal, resultado FROM db_inventory.grpc_log WHERE item_id = $1 AND available_units = 0", [vehicleId]);
@@ -214,29 +220,29 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
     });
 
     it('una segunda reserva del mismo auto -> 409 VEHICLE_UNAVAILABLE (activa la Saga del Booking)', async () => {
-      const r = await http.post('/api/v3/autos/orders/create').set('Idempotency-Key', randomUUID())
+      const r = await http.post('/api/v3/autos/orders/create').set(booking()).set('Idempotency-Key', randomUUID())
         .send(pedido(vehicleId, { driver: { full_name: 'Ana Ruiz', email: 'ana@example.com', phone: '0991234567', license_number: '0102030405', age: 30 } }));
       expect(r.status).toBe(409);
       expect(r.body).toMatchObject({ code: 'VEHICLE_UNAVAILABLE', type: 'https://booking.epn.edu.ec/errors/vehicle-unavailable' });
     });
 
     it('errores canonicos v3: 422 DRIVER_UNDERAGE, 422 INVALID_DATES, 400 MALFORMED_REQUEST, 400 sin Idempotency-Key', async () => {
-      const menor = await http.post('/api/v3/autos/orders/create').set('Idempotency-Key', randomUUID())
+      const menor = await http.post('/api/v3/autos/orders/create').set(booking()).set('Idempotency-Key', randomUUID())
         .send(pedido('VEH-1001', { driver: { full_name: 'Nino Ruiz', email: 'n@example.com', phone: '0991234567', license_number: '0102030405', age: 16 } }));
       expect(menor.status).toBe(422);
       expect(menor.body.code).toBe('DRIVER_UNDERAGE');
-      const fechas = await http.post('/api/v3/autos/orders/create').set('Idempotency-Key', randomUUID()).send(pedido(vehicleId, { pickup_date: '2020-01-01' }));
+      const fechas = await http.post('/api/v3/autos/orders/create').set(booking()).set('Idempotency-Key', randomUUID()).send(pedido(vehicleId, { pickup_date: '2020-01-01' }));
       expect(fechas.status).toBe(422);
       expect(fechas.body.code).toBe('INVALID_DATES');
-      const malformado = await http.post('/api/v3/autos/orders/create').set({ 'Idempotency-Key': randomUUID(), 'Content-Type': 'application/json' }).send('{"vehicle_id": ');
+      const malformado = await http.post('/api/v3/autos/orders/create').set(booking()).set({ 'Idempotency-Key': randomUUID(), 'Content-Type': 'application/json' }).send('{"vehicle_id": ');
       expect(malformado.status).toBe(400);
       expect(malformado.body.code).toBe('MALFORMED_REQUEST');
-      const sinClave = await http.post('/api/v3/autos/orders/create').send(pedido(vehicleId));
+      const sinClave = await http.post('/api/v3/autos/orders/create').set(booking()).send(pedido(vehicleId));
       expect(sinClave.status).toBe(400);
     });
 
     it('Ley de Postel: acepta conductor/cobertura en espanol', async () => {
-      const r = await http.post('/api/v3/autos/orders/create').set('Idempotency-Key', randomUUID()).send({
+      const r = await http.post('/api/v3/autos/orders/create').set(booking()).set('Idempotency-Key', randomUUID()).send({
         vehicle_id: vehicleId, fecha_recogida: fechaEc(2), fecha_devolucion: fechaEc(4), cobertura: 'TOTAL',
         conductor: { nombre: 'Juan Perez', email, telefono: '+593987654321', licencia_conducir: cedula, edad: 28 },
       });
@@ -267,6 +273,7 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
         .send({ licencia_conducir: cedula, km_salida: 150, acepta_contrato: true });
       expect(r.status).toBe(200);
       expect(r.body).toMatchObject({
+        status: 'CONFIRMADO_ASISTIDO', pickup_date: fechaEc(2), dropoff_date: fechaEc(5),
         estado_orden: 'CONFIRMADO_ASISTIDO', estado_vehiculo: 'ENTREGADO', km_salida: 150, client_id: clientId,
         admin_id: 'admin-e2e@rentafacil.ec', notificacion_booking: { status: 'PENDING', modo: 'fire-and-forget' },
         mensaje: 'Entrega confirmada. Vehículo entregado al cliente.',
@@ -319,11 +326,41 @@ describeDb('Reto 2 final /api/v3 (e2e)', () => {
       expect(v1.body.some((o: any) => o.order_id === orderId)).toBe(true);
     });
 
+    it('Ajuste 7: cancelar una orden ya entregada -> 409 ORDER_ALREADY_DELIVERED; v3 la lee como CONFIRMADO_ASISTIDO', async () => {
+      const r = await http.post(`/api/v3/autos/orders/${pnr}/cancel`).set(booking()).send({ reason: 'el cliente ya tiene el auto' });
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({
+        type: 'https://rentafacil.ec/errors/order-already-delivered', title: 'Order already delivered', status: 409,
+        detail: `La orden ${pnr} ya fue entregada al cliente y no puede cancelarse`, code: 'ORDER_ALREADY_DELIVERED',
+      });
+      const o = await http.get(`/api/v3/autos/orders/${pnr}`).set(booking());
+      expect(o.body).toMatchObject({ status: 'CONFIRMADO_ASISTIDO', pickup_date: fechaEc(2), dropoff_date: fechaEc(5) });
+    });
+
+    it('Ajustes 1-4: otra reserva del MISMO auto en otro rango coexiste, se lista con fechas y se cancela solo con { reason }', async () => {
+      const r = await http.post('/api/v3/autos/orders/create').set(booking()).set('Idempotency-Key', randomUUID())
+        .send(pedido(vehicleId, { pickup_date: fechaEc(10), dropoff_date: fechaEc(12) }));
+      expect(r.status).toBe(201);
+      expect(r.body).toMatchObject({ status: 'CONFIRMED', pickup_date: fechaEc(10), dropoff_date: fechaEc(12) });
+      const lista = await http.get('/api/v3/autos/orders').set(booking());
+      expect(lista.body.find((x: any) => x.pnr === r.body.pnr)).toMatchObject({ pickup_date: fechaEc(10), dropoff_date: fechaEc(12) });
+      expect((await http.get('/api/v3/autos/orders')).status).toBe(401);
+      // Sin Idempotency-Key (asi cancela el Booking) -> 200; el reintento del mismo dia se deduplica
+      const c = await http.post(`/api/v3/autos/orders/${r.body.pnr}/cancel`).set(booking()).send({ reason: 'prueba sin idempotency' });
+      expect(c.status).toBe(200);
+      expect(c.body).toMatchObject({ status: 'CANCELLED', pnr: r.body.pnr, pickup_date: fechaEc(10), dropoff_date: fechaEc(12) });
+      const otra = await http.post(`/api/v3/autos/orders/${r.body.pnr}/cancel`).set(booking()).send({ reason: 'reintento' });
+      expect(otra.status).toBe(200);
+      expect(otra.body.refund.refund_id).toBe(c.body.refund.refund_id);
+      // /api/v2 sigue exigiendo Idempotency-Key
+      expect((await http.post(`/api/v2/autos/orders/${r.body.pnr}/cancel`).set(admin()).send({})).status).toBe(400);
+    });
+
     it('si el Booking falla, el check-in local NO falla y la notificacion queda para reintento', async () => {
       // Otra reserva sobre un auto del seed propio para no depender de datos externos
       const placa2 = `${letras()}-${Math.floor(1000 + Math.random() * 8999)}`;
       const v = await http.post('/api/v3/admin/vehicles').set(admin()).send({ marca: 'Kia', modelo: 'Picanto', anio: 2024, placa: placa2, precio_diario: 30, depot_id: f.depot.depot_id, supplier_id: f.supplier.supplier_id });
-      const o = await http.post('/api/v3/autos/orders/create').set('Idempotency-Key', randomUUID()).send(pedido(v.body.vehicle_id));
+      const o = await http.post('/api/v3/autos/orders/create').set(booking()).set('Idempotency-Key', randomUUID()).send(pedido(v.body.vehicle_id));
       bookingStatus = 504;
       try {
         const r = await http.post(`/api/v3/autos/orders/${o.body.pnr}/checkin-entrega`).set({ ...admin(), 'Idempotency-Key': randomUUID() })

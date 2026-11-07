@@ -130,9 +130,12 @@ describe('Compatibilidad v1/v2/v3 en las respuestas', () => {
     expect(r).toEqual({ _links: { self: '/api/v3/autos/orders/RF1' }, foto: 'https://x/api/v2x.png', n: 1 });
   });
 
-  it('conStockV3 agrega stock/available_units/status a cada tarjeta del catalogo', () => {
-    const r = conStockV3({ data: [{ vehicle_id: 'A', precio_diario: 1, estado: 'DISPONIBLE' }, { vehicle_id: 'B', precio_diario: 1, estado: 'RESERVADO' }] });
-    expect(r.data.map((c: any) => [c.stock, c.available_units, c.status])).toEqual([[1, 1, 'DISPONIBLE'], [0, 0, 'RESERVADO']]);
+  it('conStockV3 agrega stock/available_units/status; RESERVADO es por rango -> DISPONIBLE en el catalogo', () => {
+    const r = conStockV3({ data: [
+      { vehicle_id: 'A', precio_diario: 1, estado: 'DISPONIBLE' }, { vehicle_id: 'B', precio_diario: 1, estado: 'RESERVADO' },
+      { vehicle_id: 'C', precio_diario: 1, estado: 'EN_LIMPIEZA' },
+    ] });
+    expect(r.data.map((c: any) => [c.stock, c.available_units, c.status])).toEqual([[1, 1, 'DISPONIBLE'], [1, 1, 'DISPONIBLE'], [0, 0, 'EN_LIMPIEZA']]);
   });
 
   it('cobertura v3 en ingles (BASIC/TOTAL) y alias en espanol (BASICA/PREMIUM)', () => {

@@ -49,9 +49,11 @@ Todo el contrato `backend/contracts/autos-openapi-v3.yaml` (mismas rutas que v2)
 | Endpoint | Qué hace | Seguridad |
 |---|---|---|
 | `GET /api/v3/health`, `GET /api/v3/autos/health` | Semáforo LED con `dependencias` (BD, RabbitMQ, Booking) y `outbox_pendientes` (< 500 ms) | pública |
-| `POST /api/v3/autos/orders/create` (+ `/reservas`, `/orders`) | Reserva con `driver` en inglés (tolera `conductor`, `fecha_recogida`, `cobertura`); upsert del cliente y `fk_cliente` en la orden | X-API-Key / JWT |
-| `GET /api/v3/clientes?email=&identificacion=` | Cliente por email **o** cédula → `200 {client_id,nombre,email,identificacion}` / `404` (o `200 []` con `X-Prefer-Empty-Array: true`) | X-API-Key (tolerante) |
-| `POST /api/v3/clientes` | Crea → `201 {client_id}`; si email **o** cédula ya existen → `200` con el existente (nunca 409) | X-API-Key (tolerante) |
+| `POST /api/v3/autos/orders/create` (+ `/reservas`, `/orders`) | Reserva con `driver` en inglés (tolera `conductor`, `fecha_recogida`, `cobertura`); upsert del cliente y `fk_cliente` en la orden. Bloquea el auto **solo en su rango de fechas** | X-API-Key / JWT |
+| `POST /api/v3/autos/orders/{pnr}/cancel` | Cancela con solo `{ "reason": "<texto libre>" }`; `Idempotency-Key` **opcional** (sin ella se deduplica por PNR + fecha). `409 ORDER_ALREADY_DELIVERED` si ya hubo check-in de entrega | X-API-Key / JWT |
+| `GET /api/v3/autos/{id}/disponibilidad?pickup_date=&dropoff_date=` | Disponibilidad del auto en un rango (`DISPONIBLE` / `RESERVADO` / `EN_LIMPIEZA` / `EN_MANTENIMIENTO`) | pública |
+| `GET /api/v3/clientes?email=&identificacion=` | Cliente por email **o** cédula → `200 {client_id,nombre,email,identificacion}` / `404` (o `200 []` con `X-Prefer-Empty-Array: true`) | X-API-Key / JWT |
+| `POST /api/v3/clientes` | Crea → `201 {client_id}`; si email **o** cédula ya existen → `200` con el existente (nunca 409) | X-API-Key / JWT |
 | `GET /api/v3/autos/orders/buscar?q=` | Buscador del mostrador: `@` → email, 10 dígitos → cédula, si no → PNR | JWT ADMIN/MANTENIMIENTO |
 | `POST /api/v3/autos/orders/{id}/checkin-entrega` | Check-in físico → `CONFIRMADO_ASISTIDO` + notificación al Booking | JWT ADMIN/MANTENIMIENTO |
 | `POST /api/v3/admin/vehicles` | Alta de vehículo con stock 1 + `PushStockUpdate available_units=1` | JWT ADMIN |
@@ -66,14 +68,30 @@ Todo el contrato `backend/contracts/autos-openapi-v3.yaml` (mismas rutas que v2)
 API=https://rentafacil-autos-api.azurewebsites.net/api/v3
 curl -X POST $API/clientes -H "Content-Type: application/json" -H "X-API-Key: $KEY" -H "X-Correlation-Id: booking-demo-1" \
   -d '{"nombre":"Juan Perez","email":"juan@example.com","identificacion":"1710034065","telefono":"+593987654321"}'   # 201 {client_id}
-curl -X POST $API/clientes -H "Content-Type: application/json" \
+curl -X POST $API/clientes -H "Content-Type: application/json" -H "X-API-Key: $KEY" \
   -d '{"nombre":"Juan","email":"juan@example.com","identificacion":"1710034065"}'                                     # 200 existente
 curl "$API/clientes?email=juan@example.com" -H "X-API-Key: $KEY"                                                     # 200
-curl "$API/clientes?email=nadie@example.com" -H "X-Prefer-Empty-Array: true"                                         # 200 []
+curl "$API/clientes?email=nadie@example.com" -H "X-API-Key: $KEY" -H "X-Prefer-Empty-Array: true"                    # 200 []
+curl "$API/clientes?email=juan@example.com"                                                                          # 401 MISSING_API_KEY
 ```
 
 `origen` = `BOOKING` si el `X-Correlation-Id` empieza con `booking-`, llega `X-Source: BOOKING` o entra con X-API-Key; si no, `WEB`.
-Mientras `BOOKING_API_KEY` diga `PENDIENTE...`, las peticiones con cualquier X-API-Key (o sin ella, en clientes y reservas) se aceptan con un `WARN` en el log para que la demo no falle; con la clave del profesor configurada, una X-API-Key incorrecta responde 401.
+
+### Ajustes de integración con el Booking Central (feedback Reto 2)
+
+| # | Ajuste | Comportamiento en `/api/v3` (v1 y v2 sin cambios) |
+|---|---|---|
+| 1 | Cancel sin `Idempotency-Key` | `POST /autos/orders/{pnr}/cancel` con `{ reason }` → `200`. Si viene la cabecera se usa; si no, clave derivada de PNR + fecha UTC (reintentos del mismo día devuelven la misma respuesta). `/api/v2` la sigue exigiendo (400). |
+| 2 | Bloqueo por rango de fechas | El auto solo está reservado en los rangos que se cruzan con una orden `CONFIRMED`/`ENTREGADO`: `[a1,a2]` y `[b1,b2]` se cruzan si `a1 <= b2 AND b1 <= a2`. `GET /autos` y `GET /autos/{id}` muestran `DISPONIBLE` salvo `EN_LIMPIEZA`/`EN_MANTENIMIENTO`; `POST /autos/search` y `GET /autos/{id}/disponibilidad` aplican la regla con `pickup_date`/`dropoff_date`. El `PushStockUpdate` al Booking ya es por fecha (`date` = día de recogida). |
+| 3 | `pickup_date` / `dropoff_date` | `YYYY-MM-DD` (`route_details.*.datetime` → `toISOString().slice(0,10)`) en listar, obtener, crear, `/reservas` y cancel. |
+| 4 | `X-API-Key` obligatoria | `/autos/orders*`, `/autos/reservas*`, `/clientes*` exigen `X-API-Key: $RENTAFACIL_API_KEY` (el panel web propio usa su JWT). Sin ella o incorrecta → `401` `{ type: https://rentafacil.ec/errors/unauthorized, code: MISSING_API_KEY }`. Log: `[AUTH] /path -> 401 MISSING_API_KEY` / `[AUTH] /path -> OK sender=BOOKING`. Al arrancar: `[STARTUP] RENTAFACIL_API_KEY=...`. |
+| 5 | Check-in → `CONFIRMADO_ASISTIDO` | Tras `checkin-entrega` el `status` de la orden en v3 es `CONFIRMADO_ASISTIDO` (internamente sigue `ENTREGADO`; `/api/v2` devuelve `ENTREGADO`). |
+| 6 | `external_order_id` = PNR | La notificación va a `/reservas/{PNR}/checkin` con `external_order_id: "RF..."`. |
+| 7 | Cancelar entregada → 409 | Con `checkin_entrega_at` → `409` `{ type: https://rentafacil.ec/errors/order-already-delivered, code: ORDER_ALREADY_DELIVERED }`. |
+| 8 | Fotos VEH-1011 / VEH-1012 | Sembradas en el seed y completadas en la BD actual en el arranque (UPDATE idempotente solo si `main_image_url` está vacío). |
+| 9 | `reason` del stock | `POST {BOOKING}/api/v3/inventory/stock` con `{ item_id, available_units, date, reason }`: **`reason` es texto libre** (también documentado en `/api/v3/docs`). |
+
+`RENTAFACIL_API_KEY` (la que el Booking usa para llamarnos) ≠ `BOOKING_API_KEY` (la que RentaFacil usa para llamar al Booking). Generarla con `openssl rand -hex 24` y fijarla en Azure → Configuration; si falta, el servidor genera una temporal en cada arranque.
 
 ### Notificación de check-in al Booking central
 

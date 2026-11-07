@@ -5,6 +5,8 @@
 export interface PhotoCredit { author: string; license: string; source: string }
 
 export const PHOTO_CREDITS: Record<string, PhotoCredit> = {
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Suzuki_Swift_%282024%29_hybrid_DSC_6076.jpg/1280px-Suzuki_Swift_%282024%29_hybrid_DSC_6076.jpg": { author: "Alexander-93", license: "CC BY-SA 4.0", source: "https://commons.wikimedia.org/wiki/File:Suzuki_Swift_(2024)_hybrid_DSC_6076.jpg" },
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/2023_Kia_Sportage_%28NQ5%29_in_White%2C_front_left.jpg/1280px-2023_Kia_Sportage_%28NQ5%29_in_White%2C_front_left.jpg": { author: "Benespit", license: "CC BY-SA 4.0", source: "https://commons.wikimedia.org/wiki/File:2023_Kia_Sportage_(NQ5)_in_White,_front_left.jpg" },
   "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/Chevrolet_Sail_1.5_LT_2016.jpg/1280px-Chevrolet_Sail_1.5_LT_2016.jpg": { author: "RL GNZLZ", license: "CC BY-SA 2.0", source: "https://commons.wikimedia.org/wiki/File:Chevrolet_Sail_1.5_LT_2016.jpg" },
   "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Chevrolet_Sail_1.5_LTZ_2024_%2853384018077%29.jpg/1280px-Chevrolet_Sail_1.5_LTZ_2024_%2853384018077%29.jpg": { author: "RL GNZLZ", license: "CC BY-SA 2.0", source: "https://commons.wikimedia.org/wiki/File:Chevrolet_Sail_1.5_LTZ_2024_(53384018077).jpg" },
   "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Kia_Rio4_1.4_EX_sedan_2023.jpg/1280px-Kia_Rio4_1.4_EX_sedan_2023.jpg": { author: "RL GNZLZ", license: "CC BY-SA 2.0", source: "https://commons.wikimedia.org/wiki/File:Kia_Rio4_1.4_EX_sedan_2023.jpg" },

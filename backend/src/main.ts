@@ -14,6 +14,76 @@ import { grpcServidor } from './modules/integracion/grpc/grpc-estado';
 import { AppLogger, log } from './common/app-logger';
 import { DataSource } from 'typeorm';
 import { sembrarTodo } from './modules/autos/seeds/seed';
+import { rentafacilApiKey, rentafacilApiKeyGenerada } from './common/rentafacil-api-key';
+
+/**
+ * Ajustes de integracion con el Booking Central (feedback Reto 2) documentados en /api/v3/docs,
+ * en memoria y sin modificar el YAML oficial.
+ */
+function documentarAjustesBooking(doc: any): void {
+  const p = doc.paths ?? {};
+  const ok = (d: string) => ({ description: d, content: { 'application/json': { schema: { type: 'object' } } } });
+  const problema = (d: string) => ({ description: d, content: { 'application/problem+json': { schema: { type: 'object' } } } });
+  const r401 = problema('401 MISSING_API_KEY: { type: https://rentafacil.ec/errors/unauthorized, title: Unauthorized, status: 401, detail: "X-API-Key missing or invalid", code: MISSING_API_KEY }');
+  const seguridadM2M = [{ ApiKeyAuth: [] }, { BearerAuth: [] }];
+
+  // Ajuste 4: X-API-Key obligatoria en /autos/orders*, /autos/reservas* y /clientes
+  for (const [ruta, item] of Object.entries<any>(p)) {
+    if (!/^\/(autos\/(orders|reservas)|clientes)(\/|$)/.test(ruta)) continue;
+    for (const op of Object.values<any>(item)) {
+      if (!op || typeof op !== 'object' || !op.responses) continue;
+      op.security = seguridadM2M;
+      op.responses = { ...op.responses, 401: r401 };
+    }
+  }
+
+  // Ajuste 1 + 7: cancel con Idempotency-Key opcional y 409 ORDER_ALREADY_DELIVERED
+  const cancel = p['/autos/orders/{orderId}/cancel']?.post;
+  if (cancel) {
+    cancel.parameters = (cancel.parameters ?? []).map((x: any) => (x?.name === 'Idempotency-Key'
+      ? { ...x, required: false, description: 'OPCIONAL en /api/v3 (en /api/v2 sigue siendo obligatoria). Si no viene, la cancelación se deduplica por PNR + fecha UTC.' }
+      : x));
+    cancel.description = `${cancel.description ?? ''}\n\n**RentaFacil EC:** el Booking puede cancelar con solo \`{ "reason": "<texto libre>" }\` y sin Idempotency-Key. ` +
+      'Si la orden ya tiene check-in de entrega (vehículo entregado físicamente) responde **409 ORDER_ALREADY_DELIVERED**. La respuesta incluye `pickup_date` y `dropoff_date`.';
+    cancel.responses = { ...cancel.responses, 409: problema('ORDER_ALREADY_DELIVERED (type https://rentafacil.ec/errors/order-already-delivered) | ORDER_ALREADY_CANCELLED | ORDER_EXPIRED') };
+  }
+
+  // Ajuste 3 + 5: pickup_date / dropoff_date y status CONFIRMADO_ASISTIDO en AutoOrderResponseV2
+  const orden = doc.components?.schemas?.AutoOrderResponseV2;
+  if (orden?.properties) {
+    orden.properties.pickup_date = { type: 'string', format: 'date', example: '2026-12-26', description: 'Fecha de recogida YYYY-MM-DD (route_details.pickup.datetime)' };
+    orden.properties.dropoff_date = { type: 'string', format: 'date', example: '2026-12-28', description: 'Fecha de devolución YYYY-MM-DD (route_details.dropoff.datetime)' };
+    if (orden.properties.status) {
+      orden.properties.status = { ...orden.properties.status, description: 'CONFIRMED | CHECKIN_COMPLETED | CONFIRMADO_ASISTIDO (tras checkin-entrega; en /api/v2 es ENTREGADO) | COMPLETADA | CANCELLED' };
+    }
+  }
+
+  // Ajuste 2: disponibilidad por rango de fechas
+  p['/autos/{id}/disponibilidad'] = {
+    get: {
+      tags: ['Autos - Catálogo y Búsqueda v2'],
+      summary: 'Disponibilidad de un vehículo para un rango de fechas (bloqueo por rango, no por auto entero)',
+      description: 'El auto solo está RESERVADO en los rangos que se cruzan con una orden CONFIRMED o ENTREGADO: [a1,a2] y [b1,b2] se cruzan cuando a1 <= b2 AND b1 <= a2. ' +
+        'GET /autos y GET /autos/{id} muestran DISPONIBLE salvo EN_LIMPIEZA / EN_MANTENIMIENTO; POST /autos/search aplica la misma regla con pickup_date / dropoff_date.',
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'string' }, example: 'VEH-1001' },
+        { name: 'pickup_date', in: 'query', required: true, schema: { type: 'string', format: 'date' }, example: '2027-01-10' },
+        { name: 'dropoff_date', in: 'query', required: true, schema: { type: 'string', format: 'date' }, example: '2027-01-12' },
+      ],
+      responses: { 200: ok('{ vehicle_id, pickup_date, dropoff_date, disponible, estado, available_units, rangos_reservados[] }'), 404: problema('VEHICLE_NOT_FOUND'), 422: problema('INVALID_DATES') },
+      security: [],
+    },
+  };
+
+  // Ajuste 9 (informativo): reason del stock es texto libre
+  doc.info = doc.info ?? {};
+  doc.info.description = `${doc.info.description ?? ''}\n\n### Integración con el Booking Central (RentaFacil EC)\n` +
+    '- **Stock:** RentaFacil envía `POST {BOOKING}/api/v3/inventory/stock` con `{ item_id, available_units, date, reason }`; `reason` es **texto libre**.\n' +
+    '- **Check-in:** `POST {BOOKING}/api/v3/reservas/{external_order_id}/checkin`, donde `external_order_id` es el **PNR (RF...)**, con estado `CONFIRMADO_ASISTIDO`.\n' +
+    '- **X-API-Key:** obligatoria en `/autos/orders*`, `/autos/reservas*` y `/clientes` (401 `MISSING_API_KEY`). Públicas: health, catálogo, search, detalle, coberturas, flota, promociones/contrato, eventos y docs.\n' +
+    '- **Cancel:** `POST /autos/orders/{pnr}/cancel` con solo `{ reason }` (Idempotency-Key opcional).\n' +
+    '- **Disponibilidad:** bloqueo por rango de fechas que se cruzan (dos reservas pueden coexistir en meses distintos sobre el mismo auto).';
+}
 
 /** Lee un contrato YAML de backend/contracts (cwd = backend en Render y en local). */
 function leerContrato(nombre: string): OpenAPIObject | null {
@@ -77,6 +147,7 @@ function swaggerV3(app: INestApplication): void {
         responses: { 201: ok('AutoVehiculoCardV2 + stock') } },
     },
   };
+  documentarAjustesBooking(doc);
   SwaggerModule.setup('api/v3/docs', app, doc, {
     swaggerOptions: { persistAuthorization: true, docExpansion: 'none' },
     customSiteTitle: 'RentaFacil EC - Autos API v3.0.0 (contrato oficial RDA2)',
@@ -199,6 +270,11 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   log.info('BOOTSTRAP', `RentaFacil EC - Autos API v3 escuchando en 0.0.0.0:${port}`, { node_env: process.env.NODE_ENV, nodo: process.env.NODE_ID || 'NODE_AUT_RENTAFACIL' });
   log.info('BOOTSTRAP', 'Swagger v1: /api/docs | v2: /api/v2/docs | v3: /api/v3/docs | health: /api/v3/autos/health');
+  // X-API-Key que el Booking Central debe enviar a /api/v3/autos/orders* y /api/v3/clientes*
+  if (rentafacilApiKeyGenerada()) {
+    log.warn('STARTUP', 'RENTAFACIL_API_KEY no configurada: se genero una clave temporal (cambia en cada reinicio). Fijela en Azure -> Configuration.');
+  }
+  log.info('STARTUP', `RENTAFACIL_API_KEY=${rentafacilApiKey()}`);
 
   // Seed idempotente en el arranque (Azure no ejecuta scripts previos): 12 autos, usuarios demo, contrato B2B
   if (process.env.SEED_ON_START === 'true') {

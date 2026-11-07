@@ -13,6 +13,8 @@ process.env.RABBITMQ_URL = process.env.TEST_RABBITMQ_URL ?? '';
 for (const k of ['BOOKING_GRPC_HOST', 'BOOKING_GRPC_URL', 'BOOKING_REST_STOCK_URL', 'BOOKING_CHECKIN_URL', 'BOOKING_BASE_URL', 'BOOKING_API_KEY', 'API_KEY_INTERNAL']) {
   process.env[k] = '';
 }
+// X-API-Key que el Booking usa para llamar a /api/v3 (las pruebas la envian en X-API-Key)
+process.env.RENTAFACIL_API_KEY = 'test-rentafacil-api-key-0123456789abcdef';
 if (process.env.TEST_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
   process.env.SUPABASE_URL = process.env.TEST_DATABASE_URL;

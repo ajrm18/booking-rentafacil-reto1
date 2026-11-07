@@ -7,7 +7,7 @@ import { IdempotencyService } from '../integracion/idempotency.service';
 import { OutboxService } from '../integracion/outbox.service';
 import { CatalogoV2Service } from '../autos-v2/catalogo-v2.service';
 import { FlotaV2Service } from '../autos-v2/flota-v2.service';
-import { idempotencyKeyDe, IdempotencyV2Guard } from '../autos-v2/idempotency-v2.guard';
+import { idempotencyKeyDe, idempotencyKeyOpcionalDe, IdempotencyOpcionalGuard, IdempotencyV2Guard } from '../autos-v2/idempotency-v2.guard';
 import { PromocionesV2Service } from '../autos-v2/promociones-v2.service';
 import { authV2De, Roles } from '../autos-v2/v2-auth.guard';
 import { origenDe } from '../clientes/clientes.controller';
@@ -40,8 +40,10 @@ export class TelemetriaV3Controller {
     return h;
   }
 
+  /** Feed publico de eventos (sin X-API-Key, como pidio el Booking). */
   @Get('autos/eventos')
   @UseGuards(V3AuthGuard)
+  @ToleranteSinCredenciales()
   @Roles('ADMIN', 'MANTENIMIENTO', 'B2B')
   async eventos(@Query('limit') limit?: string, @Query('after') after?: string) {
     const { events, total } = await this.outbox.feed(Number(limit ?? 10), after || undefined);
@@ -82,6 +84,10 @@ export class FlotaV3Controller {
   }
 }
 
+/**
+ * Rutas M2M del Booking: /autos/orders*, /autos/reservas*. apiKeyV3Middleware exige X-API-Key
+ * (o el JWT del panel web) antes de llegar aqui -> 401 MISSING_API_KEY.
+ */
 @ApiExcludeController()
 @Controller(BASE)
 @UseGuards(V3AuthGuard)
@@ -102,7 +108,6 @@ export class ReservasV3Controller {
 
   @Post('orders/create')
   @HttpCode(201)
-  @ToleranteSinCredenciales()
   @UseGuards(IdempotencyV2Guard)
   crear(@Body() body: any, @Req() req: Request) {
     return this.reservas.crear(body, ctx(req));
@@ -111,7 +116,6 @@ export class ReservasV3Controller {
   /** Alias de compatibilidad (el Booking tambien usa POST /reservas y /orders). */
   @Post(['reservas', 'orders'])
   @HttpCode(201)
-  @ToleranteSinCredenciales()
   @UseGuards(IdempotencyV2Guard)
   crearAlias(@Body() body: any, @Req() req: Request) {
     return this.reservas.crear(body, ctx(req));
@@ -122,12 +126,12 @@ export class ReservasV3Controller {
     return this.reservas.obtener(orderId, authV2De(req));
   }
 
+  /** Idempotency-Key opcional (el Booking cancela solo con { reason }); /api/v2 la sigue exigiendo. */
   @Post('orders/:orderId/cancel')
   @HttpCode(200)
-  @ToleranteSinCredenciales()
-  @UseGuards(IdempotencyV2Guard)
+  @UseGuards(IdempotencyOpcionalGuard)
   cancelar(@Param('orderId') orderId: string, @Body() body: any, @Req() req: Request) {
-    return this.reservas.cancelar(orderId, body, ctx(req));
+    return this.reservas.cancelar(orderId, body, { ...ctx(req), idempotencyKey: idempotencyKeyOpcionalDe(req) });
   }
 
   @Post('reservas/:id/checkin')
@@ -160,15 +164,24 @@ export class ReservasV3Controller {
 export class CatalogoV3Controller {
   constructor(private readonly catalogo: CatalogoV2Service, private readonly flota: FlotaV2Service) {}
 
+  /** Catalogo general: todos DISPONIBLE salvo EN_LIMPIEZA / EN_MANTENIMIENTO (RESERVADO es por rango). */
   @Get()
   async listar(@Query() q: any) {
-    return conStockV3(await this.catalogo.listar(q ?? {}));
+    return conStockV3(await this.catalogo.listar(q ?? {}, { porRango: true }));
   }
 
+  /** Excluye solo los autos con una reserva cuyo rango se cruza con pickup_date..dropoff_date. */
   @Post('search')
   @HttpCode(200)
   async buscar(@Body() body: any) {
-    return conStockV3(await this.catalogo.buscar(body));
+    return conStockV3(await this.catalogo.buscar(body, { porRango: true }));
+  }
+
+  /** GET /api/v3/autos/{id}/disponibilidad?pickup_date=YYYY-MM-DD&dropoff_date=YYYY-MM-DD */
+  @Get(':id/disponibilidad')
+  @Header('Cache-Control', 'no-store')
+  async disponibilidad(@Param('id') id: string, @Query('pickup_date') pickup?: string, @Query('dropoff_date') dropoff?: string) {
+    return this.catalogo.disponibilidad(id, pickup, dropoff);
   }
 
   @Get(':id/coberturas')

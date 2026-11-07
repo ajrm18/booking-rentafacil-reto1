@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, IsNull, Repository } from 'typeorm';
 import { log } from '../../common/app-logger';
@@ -12,7 +12,7 @@ import { OrigenCliente } from '../clientes/cliente.entity';
 import { ClientesService, normIdentificacion } from '../clientes/clientes.service';
 import { BookingNotifierService } from './booking-notifier.service';
 import { Checkin } from './entities/checkin.entity';
-import { aV3, detectarTipo, estadoMostrador, TipoBusqueda } from './v3';
+import { aV3, claveCancelacionDerivada, conFechasV3, detectarTipo, estadoMostrador, TipoBusqueda } from './v3';
 
 export interface CtxV3 { auth: AuthV2; idempotencyKey: string; correlationId: string; origen: OrigenCliente }
 
@@ -50,20 +50,24 @@ export class ReservasV3Service {
           return null;
         }
       },
+      // Ajuste 2: el auto se bloquea solo en el rango reservado, no globalmente
+      porRango: true,
     });
     const o = await this.orders.findOne({ where: { order_id: r.order_id } });
-    return aV3({ ...r, vehicle_id: r.auto_id, voucher_qr_payload: r.voucher_qr_data, client_id: o?.fk_cliente ?? null });
+    return aV3(conFechasV3({ ...r, vehicle_id: r.auto_id, voucher_qr_payload: r.voucher_qr_data, client_id: o?.fk_cliente ?? null }, o));
   }
 
+  /** GET /api/v3/autos/orders: cada orden con pickup_date / dropoff_date (YYYY-MM-DD). */
   async listar(auth: AuthV2) {
-    return aV3(await this.v2.listar(auth));
+    const lista = await this.v2.listar(auth);
+    return aV3(lista.map((r) => conFechasV3({ ...r, vehicle_id: r.auto_id })));
   }
 
   async obtener(ref: string, auth: AuthV2) {
     const r = await this.v2.obtener(ref, auth);
     const o = await this.orders.findOne({ where: { order_id: r.order_id } });
     const v = o ? await this.vehicles.findOne({ where: { vehicle_id: o.vehicle_id } }) : null;
-    return aV3({ ...r, vehicle_id: r.auto_id, voucher_qr_payload: r.voucher_qr_data, client_id: o?.fk_cliente ?? null, estado_mostrador: o ? estadoMostrador(o, v) : null });
+    return aV3(conFechasV3({ ...r, vehicle_id: r.auto_id, voucher_qr_payload: r.voucher_qr_data, client_id: o?.fk_cliente ?? null, estado_mostrador: o ? estadoMostrador(o, v) : null }, o));
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -161,7 +165,7 @@ export class ReservasV3Service {
       km_salida: b.km_salida ?? b.odometro ?? b.mileage_out,
       tecnico_entrega: b.tecnico_entrega,
     };
-    const r = await this.v2.checkinEntrega(ref, v2Body, ctx);
+    const r = await this.v2.checkinEntrega(ref, v2Body, ctx, { porRango: true });
     const o = await this.orders.findOneByOrFail({ order_id: r.order_id });
 
     // Solo la primera vez (un reintento con la misma Idempotency-Key no vuelve a notificar)
@@ -183,15 +187,17 @@ export class ReservasV3Service {
       const n = await this.notificador.deOrden(o.order_id);
       notificacion = n ? { id: n.id, status: n.status, destino: n.url, attempts: n.attempts } : null;
     }
-    return aV3({
+    // Ajuste 5: internamente la orden queda ENTREGADO (checkin_entrega_at); en /api/v3 su status es CONFIRMADO_ASISTIDO
+    return aV3(conFechasV3({
       ...r,
+      status: 'CONFIRMADO_ASISTIDO',
       estado_orden: 'CONFIRMADO_ASISTIDO',
       estado_vehiculo: 'ENTREGADO',
       client_id: o.fk_cliente,
       admin_id: ctx.auth.sub,
       notificacion_booking: notificacion,
       mensaje: 'Entrega confirmada. Vehículo entregado al cliente.',
-    });
+    }, o));
   }
 
   async checkinDevolucion(ref: string, body: any, ctx: CtxV3) {
@@ -216,7 +222,27 @@ export class ReservasV3Service {
     return aV3(r);
   }
 
+  /**
+   * POST /api/v3/autos/orders/{pnr}/cancel
+   *  - Idempotency-Key OPCIONAL (Ajuste 1): sin cabecera se deduplica por pnr + fecha UTC.
+   *  - 409 ORDER_ALREADY_DELIVERED si la orden ya tiene check-in de entrega (Ajuste 7).
+   *  - Respuesta con pickup_date / dropoff_date (Ajuste 3).
+   */
   async cancelar(ref: string, body: any, ctx: CtxV3) {
-    return aV3(await this.v2.cancelar(ref, body, ctx));
+    const o = await this.v2.buscarOrden(ref, ctx.auth);
+    if (o.checkin_entrega_at && o.status !== 'CANCELLED') {
+      log.warn('RESERVAS', `POST /orders/${o.locator}/cancel -> 409 ORDER_ALREADY_DELIVERED`);
+      throw new HttpException({
+        type: 'https://rentafacil.ec/errors/order-already-delivered',
+        title: 'Order already delivered',
+        status: 409,
+        detail: `La orden ${o.locator} ya fue entregada al cliente y no puede cancelarse`,
+        code: 'ORDER_ALREADY_DELIVERED',
+      }, 409);
+    }
+    const idempotencyKey = ctx.idempotencyKey || claveCancelacionDerivada(o.locator);
+    const r = await this.v2.cancelar(o.order_id, body, { ...ctx, idempotencyKey }, { porRango: true });
+    log.info('RESERVAS', `POST /orders/${o.locator}/cancel -> 200 CANCELLED`, { idempotency: ctx.idempotencyKey ? 'header' : 'derivada(pnr+fecha)' });
+    return aV3(conFechasV3({ ...r, vehicle_id: o.vehicle_id }, o));
   }
 }
